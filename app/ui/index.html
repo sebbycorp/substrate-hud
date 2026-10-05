@@ -37,7 +37,7 @@
   /* kagent logo band above everything; #content keeps the old W×H coordinates */
   #content { position: absolute; left: 0; }
   #logo { position: absolute; filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .8)); }
-  body.app #logo { margin-left: 60px; }   /* clear the window's traffic lights */
+  body.app #logo, body.app header { margin-left: 60px; }   /* clear the traffic lights; title stays under the logo */
   #coLogo { display: none; }
   body.callouts #coLogo { display: block; position: fixed; left: 4vw; top: 4vh; height: min(9vh, 5vw); opacity: 0;
                           transition: opacity .4s; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .9)); }
@@ -920,8 +920,8 @@ const arcade = (() => {
   function geo() {
     if (layout === 'wide') {
       const fx1 = Math.round(W * 0.68);
-      return { land: true, fx0: PAD, fx1, hangar: 166, ground: H - 52, legendY: 116, ufoY: 140, waitY: 104,
-               sx0: fx1 + 46, sx1: W - PAD, sy: 150, maxPx: 4.5, cpx: 4, fs: 1.7,
+      return { land: true, fx0: PAD, fx1, hangar: 142, ground: H - 52, legendY: 88, ufoY: 116, waitY: 82,
+               sx0: fx1 + 46, sx1: W - PAD, sy: 126, maxPx: 4.5, cpx: 4, fs: 1.7,
                markPx: 2.5, markStep: 25, markRow: 19, markRows: 8 };
     }
     return { land: false, fx0: PAD, fx1: W - PAD, hangar: 146, ground: H - 230, legendY: 118, ufoY: 100, waitY: 98,
@@ -1023,24 +1023,27 @@ const arcade = (() => {
     if (!raf) raf = requestAnimationFrame(frame);
   }
 
+  // the title block lines up with the kagent logo (which clears the traffic lights in the app)
+  const TITLE_INSET = TAURI ? 60 : 0;
   function header(s, G, t) {
     const ready = s.workers.filter(w => w.ready).length, desired = s.pools.reduce((a, p) => a + p.desired, 0);
     const status = sim ? 'SIMULATED' : (s.connected ? 'LIVE' : 'OFFLINE'), sc = sim ? C.blue : s.connected ? C.green : C.red;
     const stats = [['SCORE', String(s.stats.suspends).padStart(4, '0')], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0')],
                    ['INVADERS', String(occ.size)], ['WORKERS', `${ready}/${desired}`]];
     if (G.land) {
-      text('AGENT SUBSTRATE', PAD, 40, 13, C.white);
+      const tx = PAD + TITLE_INSET;     // directly under the logo
+      text('AGENT SUBSTRATE', tx, 22, 13, C.white);
       const ctxTxt = sim ? '' : `${(s.context || '').toUpperCase()}  ·  `;
-      text(ctxTxt, PAD, 74, 9, C.dim);
-      text(status, PAD + (ctxTxt ? textW(ctxTxt, 9) : 0), 74, 9, sc);
+      text(ctxTxt, tx, 52, 9, C.dim);
+      text(status, tx + (ctxTxt ? textW(ctxTxt, 9) : 0), 52, 9, sc);
       const x0 = Math.round(W * 0.44), step = (W - PAD - x0) / 4;
-      stats.forEach(([k, v], i) => { const x = x0 + i * step; text(k, x, 30, 8.5, C.dim); text(v, x, 74, 18, i === 2 ? C.green : C.white); });
-      if (Math.floor(t / 500) % 2) text('1UP', x0 + textW('SCORE ', 8.5), 30, 8.5, C.red);
+      stats.forEach(([k, v], i) => { const x = x0 + i * step; text(k, x, 14, 8.5, C.dim); text(v, x, 56, 18, i === 2 ? C.green : C.white); });
+      if (Math.floor(t / 500) % 2) text('1UP', x0 + textW('SCORE ', 8.5), 14, 8.5, C.red);
       return;
     }
-    text('AGENT SUBSTRATE', PAD, 34, 13, C.white);
-    text(status, W - PAD, 34, 10, sc, 'right');
-    text((s.context || '').toUpperCase(), PAD, 51, 9, C.dim);
+    text('AGENT SUBSTRATE', PAD + TITLE_INSET, 20, 13, C.white);
+    text(status, W - PAD, 20, 10, sc, 'right');
+    text((s.context || '').toUpperCase(), PAD + TITLE_INSET, 38, 9, C.dim);
     stats.forEach(([k, v], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 76, 8.5, C.dim); text(v, x, 97, 18, i === 2 ? C.green : C.white); });
     if (Math.floor(t / 500) % 2) text('1UP', PAD + 40, 76, 8.5, C.red);
   }
