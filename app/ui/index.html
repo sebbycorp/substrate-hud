@@ -397,9 +397,11 @@ function fit() {
   $('stage').style.transform = `scale(${s}) translate(-50%, -50%)`;
 }
 addEventListener('resize', fit);
+// Space Invaders in wide mode gets a full 16:9 stage instead of the short strip.
+const INVADERS_WIDE = { W: 1280, H: 720, PAD: 40 };
 function setLayout(name) {
   layout = name;
-  ({ W, H, PAD } = LAYOUTS[name]);
+  ({ W, H, PAD } = name === 'wide' && theme === 'invaders' ? INVADERS_WIDE : LAYOUTS[name]);
   document.body.classList.toggle('portrait', name === 'portrait');
   $('stage').style.width = W + 'px';
   $('stage').style.height = H + 'px';
@@ -419,7 +421,7 @@ let sim = params.get('sim') === '1';
 // whiteboard is the default look; ?theme=glass (or W in the app) for the transparent one
 const THEMES = ['rings', 'invaders', 'timeline', 'bars', 'wb', 'glass'];
 // The theme actually drawn: the timeline needs the tall rail, so wide falls back to bars.
-const vt = () => ((theme === 'timeline' || theme === 'invaders') && layout === 'wide' ? 'bars' : theme);
+const vt = () => (theme === 'timeline' && layout === 'wide' ? 'bars' : theme);
 const savedTheme = (() => { try { return localStorage.getItem('hud.theme'); } catch { return null; } })();
 let theme = THEMES.includes(params.get('theme')) ? params.get('theme') : (TAURI && THEMES.includes(savedTheme) ? savedTheme : 'rings');
 setLayout(params.has('layout') ? (params.get('layout') === 'wide' ? 'wide' : 'portrait')
@@ -884,8 +886,8 @@ const arcade = (() => {
                  low: { color: C.blue, name: 'LOW', sp: ['octoA', 'octoB'] } };
   const tierInfo = t => TIER[t] || TIER.low;
   const FONT = '"Silom", "Monaco", "Menlo", monospace';
-  const HANGAR = 146, FALL_START = HANGAR + 34, FALL_FULL = 60_000;  // ms to fall all the way
-  let cv, ctx, snap = null, raf = 0, px = 3;
+  const FALL_FULL = 60_000;   // ms to fall all the way
+  let cv, ctx, snap = null, raf = 0, px = 3, fs = 1;
   const occ = new Map();      // worker -> { actor, agent, since, born }
   let doomed = [], shots = [], booms = [], ufos = [], popups = [], flashes = [], capsules = [];
   let storeDest = () => [W / 2, H - 190];
@@ -893,10 +895,32 @@ const arcade = (() => {
   let lastErr = 0, cannonX = null, fired = 0, hits = 0;
   let clockOff = null, lastT = 0;   // server-minus-local clock offset (smoothed), last frame time
 
+  // Geometry for the two layouts. Portrait: one column (field, then the store
+  // under the cannon). Landscape 1280×720: the field on the left ~68%, the
+  // snapshot store and event feed in a column on the right.
+  function geo() {
+    if (layout === 'wide') {
+      const fx1 = Math.round(W * 0.68);
+      return { land: true, fx0: PAD, fx1, hangar: 150, ground: H - 64, legendY: 112, ufoY: 126, waitY: 96,
+               sx0: fx1 + 46, sx1: W - PAD, sy: 150, maxPx: 4.5, cpx: 4, fs: 1.3,
+               markPx: 2.5, markStep: 25, markRow: 19, markRows: 8 };
+    }
+    return { land: false, fx0: PAD, fx1: W - PAD, hangar: 146, ground: H - 230, legendY: 118, ufoY: 100, waitY: 98,
+             sx0: PAD, sx1: W - PAD, sy: H - 230, maxPx: 3, cpx: 3, fs: 1,
+             markPx: 2, markStep: 18, markRow: 15, markRows: 5 };
+  }
+
+  function sprite(rows, x, y, p, color, alpha = 1, glow = false) {
+    if (alpha <= 0) return;
+    const P = Math.max(1, Math.round(p * dpr)), c = baked(rows, color, P, glow);
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(c, Math.round(x * dpr) - c.pad, Math.round(y * dpr) - c.pad);
+    ctx.restore();
+  }
   let dpr = 3;
   // Sprites are rendered once per (colour, size, glow) into an offscreen canvas with the
   // shadow baked in, then stamped at whole device pixels: crisp and cheap every frame.
-  const cache = new Map();
   function baked(rows, color, P, glow) {
     const key = `${color}|${P}|${glow ? 1 : 0}`;
     const m = rows._c || (rows._c = new Map());
@@ -916,52 +940,47 @@ const arcade = (() => {
     }
     return c;
   }
-  function sprite(rows, x, y, p, color, alpha = 1, glow = false) {
-    if (alpha <= 0) return;
-    const P = Math.max(1, Math.round(p * dpr)), c = baked(rows, color, P, glow);
-    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-    ctx.globalAlpha = alpha;
-    ctx.drawImage(c, Math.round(x * dpr) - c.pad, Math.round(y * dpr) - c.pad);
-    ctx.restore();
-  }
   function invader(tier, b, cx, y, color, alpha = 1, glow = false) {      // centred on cx
     const rows = SPR[tierInfo(tier).sp[b ? 1 : 0]];
     sprite(rows, cx - (rows[0].length * px) / 2, y, px, color, alpha, glow);
   }
+  // sizes are given for portrait and scaled by fs (bigger type in landscape)
   function text(t, x, y, size, color, align = 'left', maxW = 0) {
-    ctx.font = `${size}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align;
+    ctx.font = `${size * fs}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align;
     if (maxW && ctx.measureText(t).width > maxW) {
       while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
       t += '…';
     }
     ctx.fillText(t, x, y);
   }
+  const textW = (t, size) => { ctx.font = `${size * fs}px ${FONT}`; return ctx.measureText(t).width; };
 
   // one column per worker, grouped by pool (high, coding, low)
-  function columns(s) {
+  function columns(s, G) {
     const groups = groupWorkers(s.workers, s.pools), cols = [];
-    const n = Math.max(1, groups.reduce((k, g) => k + g.workers.length, 0)), cw = (W - 2 * PAD) / n;
+    const n = Math.max(1, groups.reduce((k, g) => k + g.workers.length, 0)), cw = (G.fx1 - G.fx0) / n;
     let i = 0;
-    for (const g of groups) for (const wk of g.workers) cols.push({ wk, tier: tierOf(g.pool), cx: PAD + cw * (i++ + .5), cw });
+    for (const g of groups) for (const wk of g.workers) cols.push({ wk, tier: tierOf(g.pool), cx: G.fx0 + cw * (i++ + .5), cw });
     return { cols, groups, cw };
   }
-  const groundOf = () => H - 230;
-  const fallY = (since, now) => FALL_START + Math.min(1, Math.max(0, now - since) / FALL_FULL) * (groundOf() - 120 - FALL_START);
+  const fallStart = G => G.hangar + 8 * px + 12;
+  const fallEnd = G => G.ground - 30 - 8 * G.cpx - 60;
+  const fallY = (G, since, now) => fallStart(G) + Math.min(1, Math.max(0, now - since) / FALL_FULL) * (fallEnd(G) - fallStart(G));
 
   // one smooth clock: local time plus a slowly-corrected offset to the server's
   const clock = () => Date.now() + (clockOff || 0);
   function feed(s) {
     snap = s;
     if (s.now) { const raw = s.now - Date.now(); clockOff = clockOff == null ? raw : clockOff * 0.9 + raw * 0.1; }
-    const now = clock();
+    const now = clock(), G = geo();
     const on = new Map();
     for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) on.set(a.worker, a);
-    const where = new Map(columns(s).cols.map(c => [c.wk.name, c]));
+    const where = new Map(columns(s, G).cols.map(c => [c.wk.name, c]));
     for (const [w, o] of occ) {                     // left its worker: shoot it where it is
       const cur = on.get(w);
       if (!cur || cur.name !== o.actor) {
         const c = where.get(w);
-        if (c) doomed.push({ worker: w, actor: o.actor, tier: c.tier, cx: c.cx, y: fallY(o.since, now), fired: false, hitAt: 0 });
+        if (c) doomed.push({ worker: w, actor: o.actor, tier: c.tier, cx: c.cx, y: fallY(G, o.since, now), fired: false, hitAt: 0 });
         occ.delete(w);
       }
     }
@@ -970,12 +989,34 @@ const arcade = (() => {
       occ.set(w, { actor: a.name, agent: a.agent, since: a.since, born: performance.now() });
       if (vt() === 'invaders' && primed) sfx.beam();
       const ss = [...sess].reverse().find(x => x.actor === a.name && x.end == null), c = where.get(w);
-      if (c) popups.push({ x: c.cx, y: FALL_START - 4, text: ss?.restore_ms != null ? `+${ss.restore_ms}MS` : 'RESTORED', color: C.green, at: performance.now() });
+      if (c) popups.push({ x: c.cx, y: fallStart(G) - 4, text: ss?.restore_ms != null ? `+${ss.restore_ms}MS` : 'RESTORED', color: C.green, at: performance.now() });
     }
     for (const [w, o] of occ) { const a = on.get(w); if (a) o.since = a.since; }
     for (const e of s.events || []) if (e.kind === 'error' && e.id > lastErr) { lastErr = e.id; ufos.push({ at: performance.now(), text: e.agent }); }
     primed = true;
     if (!raf) raf = requestAnimationFrame(frame);
+  }
+
+  function header(s, G, t) {
+    const ready = s.workers.filter(w => w.ready).length, desired = s.pools.reduce((a, p) => a + p.desired, 0);
+    const status = sim ? 'SIMULATED' : (s.connected ? 'LIVE' : 'OFFLINE'), sc = sim ? C.blue : s.connected ? C.green : C.red;
+    const stats = [['SCORE', String(s.stats.suspends).padStart(4, '0')], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0')],
+                   ['INVADERS', String(occ.size)], ['WORKERS', `${ready}/${desired}`]];
+    if (G.land) {
+      text('AGENT SUBSTRATE', PAD, 46, 13, C.white);
+      const ctxTxt = sim ? '' : `${(s.context || '').toUpperCase()}  ·  `;
+      text(ctxTxt, PAD, 70, 9, C.dim);
+      text(status, PAD + (ctxTxt ? textW(ctxTxt, 9) : 0), 70, 9, sc);
+      const x0 = Math.round(W * 0.42), step = (W - PAD - x0) / 4;
+      stats.forEach(([k, v], i) => { const x = x0 + i * step; text(k, x, 38, 8.5, C.dim); text(v, x, 68, 18, i === 2 ? C.green : C.white); });
+      if (Math.floor(t / 500) % 2) text('1UP', x0 + textW('SCORE ', 8.5), 38, 8.5, C.red);
+      return;
+    }
+    text('AGENT SUBSTRATE', PAD, 34, 13, C.white);
+    text(status, W - PAD, 34, 10, sc, 'right');
+    text((s.context || '').toUpperCase(), PAD, 51, 9, C.dim);
+    stats.forEach(([k, v], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 76, 8.5, C.dim); text(v, x, 97, 18, i === 2 ? C.green : C.white); });
+    if (Math.floor(t / 500) % 2) text('1UP', PAD + 40, 76, 8.5, C.red);
   }
 
   function frame(t) {
@@ -989,108 +1030,103 @@ const arcade = (() => {
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, W, H);
     ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
-    const s = snap, now = clock();
+    const s = snap, now = clock(), G = geo();
+    fs = G.fs;
     const dt = Math.min(0.05, lastT ? (t - lastT) / 1000 : 0.016); lastT = t;
-    const { cols, groups, cw } = columns(s);
-    px = Math.min(3, (cw - 3) / 12);
-    const frameB = Math.floor(t / 650) % 2 === 1, dx = Math.sin(t / 900) * (cw > 40 ? 5 : 2.5);
+    const { cols, groups, cw } = columns(s, G);
+    px = Math.min(G.maxPx, (cw - 3) / 12);
+    const frameB = Math.floor(t / 650) % 2 === 1, dx = Math.sin(t / 900) * Math.min(10, Math.max(2.5, (cw - 12 * px) / 3));
+    const invH = 8 * px, cpx = G.cpx, cHalf = 13 * cpx / 2;
 
-    // score header
-    const ready = s.workers.filter(w => w.ready).length, desired = s.pools.reduce((a, p) => a + p.desired, 0);
-    text('AGENT SUBSTRATE', PAD, 34, 13, C.white);
-    text(sim ? 'SIMULATED' : (s.connected ? 'LIVE' : 'OFFLINE'), W - PAD, 34, 10, sim ? C.blue : s.connected ? C.green : C.red, 'right');
-    text((s.context || '').toUpperCase(), PAD, 51, 9, C.dim);
-    [['SCORE', String(s.stats.suspends).padStart(4, '0')], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0')],
-     ['INVADERS', String(occ.size)], ['WORKERS', `${ready}/${desired}`]]
-      .forEach(([k, v], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 76, 8.5, C.dim); text(v, x, 97, 18, i === 2 ? C.green : C.white); });
-    if (Math.floor(t / 500) % 2) text('1UP', PAD + 40, 76, 8.5, C.red);
+    header(s, G, t);
 
     // colour legend = priority, with busy counts
-    let lx = PAD;
+    let lx = G.fx0;
     for (const g of groups) {
       const ti = tierInfo(tierOf(g.pool)), busy = g.workers.filter(w => occ.has(w.name)).length, n = g.workers.length;
       const label = `${ti.name} ${busy}/${n}`;
-      ctx.fillStyle = ti.color; ctx.fillRect(lx, 118, 8, 8);
-      text(label, lx + 12, 126, 10, busy && busy === n ? C.red : ti.color);
-      ctx.font = `10px ${FONT}`; lx += 12 + ctx.measureText(label).width + 14;
+      ctx.fillStyle = ti.color; ctx.fillRect(lx, G.legendY, 8 * fs, 8 * fs);
+      text(label, lx + 12 * fs, G.legendY + 8 * fs, 10, busy && busy === n ? C.red : ti.color);
+      lx += 12 * fs + textW(label, 10) + 14 * fs;
     }
 
     // hangars: one per worker, dim until its invader is out
     for (const c of cols) {
       const out = occ.has(c.wk.name) || doomed.some(d => d.worker === c.wk.name);
-      invader(c.tier, false, c.cx, HANGAR, tierInfo(c.tier).color, out ? .12 : (c.wk.ready ? .32 : .14));
+      invader(c.tier, false, c.cx, G.hangar, tierInfo(c.tier).color, out ? .12 : (c.wk.ready ? .32 : .14));
     }
-    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(PAD, HANGAR + 28, W - 2 * PAD, 1);
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(G.fx0, G.hangar + invH + 4, G.fx1 - G.fx0, 1);
+    if (G.land) { ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fillRect(G.fx1 + 22, G.hangar - 20, 1, G.ground - G.hangar + 20); }
 
     // falling invaders, in their pool's colour
     for (const c of cols) {
       const o = occ.get(c.wk.name); if (!o) continue;
-      const color = tierInfo(c.tier).color, y = fallY(o.since, now), x = c.cx + dx, age = t - o.born;
+      const color = tierInfo(c.tier).color, y = fallY(G, o.since, now), x = c.cx + dx, age = t - o.born;
       if (age < 600) {   // tractor beam out of the hangar
         ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.globalAlpha = .5 * (1 - age / 600);
-        ctx.fillStyle = color; ctx.fillRect(c.cx - 6, HANGAR + 20, 12, y - HANGAR); ctx.restore();
+        ctx.fillStyle = color; ctx.fillRect(c.cx - 2 * px, G.hangar + invH - 4, 4 * px, y - G.hangar); ctx.restore();
       }
       if (!(age < 500 && Math.floor(age / 70) % 2 === 0)) invader(c.tier, frameB, x, y, color, 1, true);
-      text(o.agent || 'agent', c.cx, y + 35, 8.5, color, 'center', Math.max(34, cw - 2));
-      text(`${Math.max(0, Math.round((now - o.since) / 1000))}S`, c.cx, y + 46, 8, C.dim, 'center');
+      text(o.agent || 'agent', c.cx, y + invH + 11 * fs, 8.5, color, 'center', Math.max(34, cw - 4));
+      text(`${Math.max(0, Math.round((now - o.since) / 1000))}S`, c.cx, y + invH + 22 * fs, 8, C.dim, 'center');
     }
     for (const d of doomed) if (!d.hitAt) invader(d.tier, frameB, d.cx + dx, d.y, C.white);
 
     // agents resuming with no free worker hover in red above the hangars
-    const known = new Set(cols.map(c => c.wk.name));
+    const known = new Set(cols.map(c => c.wk.name)), fmid = (G.fx0 + G.fx1) / 2;
     const waiting = s.actors.filter(a => a.state === 'resuming' && (!a.worker || !known.has(a.worker)) && now - a.since > 1500);
     if (waiting.length) {
-      waiting.slice(0, 6).forEach((a, i) => invader('low', frameB, W / 2 - (Math.min(waiting.length, 6) - 1) * 20 + i * 40, 98, C.red));
-      if (Math.floor(t / 400) % 2) text(`POOL FULL · ${waiting.length} WAITING`, W / 2, 140, 10, C.red, 'center');
+      waiting.slice(0, 6).forEach((a, i) => invader('low', frameB, fmid - (Math.min(waiting.length, 6) - 1) * 20 + i * 40, G.waitY, C.red));
+      if (Math.floor(t / 400) % 2) text(`POOL FULL · ${waiting.length} WAITING`, fmid, G.hangar - 6, 10, C.red, 'center');
     }
 
     // cannon: glide under the next finished invader, then fire
-    const groundY = groundOf(), cy = groundY - 30;
-    if (cannonX == null) cannonX = W / 2 - 19;
+    const groundY = G.ground, cy = groundY - 8 * cpx - 6;
+    if (cannonX == null) cannonX = fmid - cHalf;
     const target = doomed.find(d => !d.fired);
     if (target) {
-      const tx = target.cx + dx - 19, dist = tx - cannonX;
+      const tx = target.cx + dx - cHalf, dist = tx - cannonX;
       // ease toward the target: fast across the screen, gentle on arrival
-      const v = Math.max(40, Math.min(420, Math.abs(dist) * 6)) * dt;
+      const v = Math.max(40, Math.min(G.land ? 700 : 420, Math.abs(dist) * 6)) * dt;
       if (Math.abs(dist) <= Math.max(v, 0.6)) {
         cannonX = tx; target.fired = true; fired++;
-        shots.push({ x: cannonX + 19, y: cy, target }); flashes.push({ x: cannonX + 19, y: cy - 4, at: t });
+        shots.push({ x: cannonX + cHalf, y: cy, target }); flashes.push({ x: cannonX + cHalf, y: cy - 4, at: t });
         sfx.laser();
       } else cannonX += Math.sign(dist) * v;
     }
-    sprite(SPR.cannon, cannonX, cy, 3, C.white);
-    ctx.fillStyle = C.green; ctx.fillRect(PAD, groundY, W - 2 * PAD, 2);
-    for (const f of flashes) sprite(SPR.flash, f.x - 7, f.y - 6, 3, C.white, 1 - (t - f.at) / 140);
+    sprite(SPR.cannon, cannonX, cy, cpx, C.white);
+    ctx.fillStyle = C.green; ctx.fillRect(G.fx0, groundY, G.fx1 - G.fx0, 2);
+    for (const f of flashes) sprite(SPR.flash, f.x - 2.5 * cpx, f.y - 2 * cpx, cpx, C.white, 1 - (t - f.at) / 140);
     flashes = flashes.filter(f => t - f.at < 140);
     ctx.save(); ctx.shadowColor = C.green; ctx.shadowBlur = 8;
     for (const sh of shots) {
-      sh.y -= 900 * dt;
-      ctx.fillStyle = C.white; ctx.fillRect(sh.x - 1.5, sh.y, 3, 12);
-      if (sh.y <= sh.target.y + 20) {
+      sh.y -= (G.land ? 1300 : 900) * dt;
+      ctx.fillStyle = C.white; ctx.fillRect(sh.x - 1.5, sh.y, 3, 12 * fs);
+      if (sh.y <= sh.target.y + invH * .8) {
         hits++; sh.target.hitAt = t; sh.done = true; sfx.boom();
-        booms.push({ x: sh.target.cx + dx - 19, y: sh.target.y, at: t });
+        booms.push({ x: sh.target.cx + dx - 6.5 * px * 1.1, y: sh.target.y, at: t });
         const done = [...(s.sessions || [])].reverse().find(x => x.actor === sh.target.actor && x.end != null);
         popups.push({ x: sh.target.cx + dx, y: sh.target.y - 2, text: '+1', color: C.white, at: t });
-        popups.push({ x: sh.target.cx + dx, y: sh.target.y + 34, text: done?.checkpoint_ms != null ? `CKPT ${done.checkpoint_ms}MS` : 'CHECKPOINTED', color: C.blue, at: t });
-        capsules.push({ x0: sh.target.cx + dx, y0: sh.target.y + 12, tier: sh.target.tier, at: t + 120 });
+        popups.push({ x: sh.target.cx + dx, y: sh.target.y + invH + 10 * fs, text: done?.checkpoint_ms != null ? `CKPT ${done.checkpoint_ms}MS` : 'CHECKPOINTED', color: C.blue, at: t });
+        capsules.push({ x0: sh.target.cx + dx, y0: sh.target.y + invH / 2, tier: sh.target.tier, at: t + 120 });
       }
     }
     ctx.restore();
     shots = shots.filter(sh => !sh.done);
-    for (const b of booms) sprite(SPR.boom, b.x, b.y, 3, C.white, 1 - (t - b.at) / 450);
+    for (const b of booms) sprite(SPR.boom, b.x, b.y, px * 1.1, C.white, 1 - (t - b.at) / 450);
     booms = booms.filter(b => t - b.at < 450);
     doomed = doomed.filter(d => !d.hitAt);
     for (const p of popups) {
       const k = (t - p.at) / 1300;
-      ctx.globalAlpha = Math.max(0, 1 - k); text(p.text, p.x, p.y - k * 18, 9, p.color, 'center'); ctx.globalAlpha = 1;
+      ctx.globalAlpha = Math.max(0, 1 - k); text(p.text, p.x, p.y - k * 18 * fs, 9, p.color, 'center'); ctx.globalAlpha = 1;
     }
     popups = popups.filter(p => t - p.at < 1300);
 
-    // mystery ship for errors
+    // mystery ship for errors, across the field
     for (const u of ufos) {
-      const k = (t - u.at) / 4500, x = -50 + k * (W + 100);
-      sprite(SPR.ufo, x, 100, 2, C.red);
-      text(u.text || 'error', x + 16, 98, 8.5, C.red, 'center');
+      const k = (t - u.at) / 4500, x = G.fx0 - 50 + k * (G.fx1 - G.fx0 + 100);
+      sprite(SPR.ufo, x, G.ufoY, 2 * fs, C.red);
+      text(u.text || 'error', x + 16 * fs, G.ufoY - 2, 8.5, C.red, 'center');
     }
     ufos = ufos.filter(u => t - u.at < 4500);
 
@@ -1099,12 +1135,14 @@ const arcade = (() => {
     const actorTier = a => { const pool = s.pools.find(p => p.name === (s.harness_pools || {})[a.harness]); return pool ? tierOf(pool) : 'low'; };
     const susp = s.actors.filter(a => a.state === 'suspended').map(a => ({ agent: a.agent || 'agent', tier: actorTier(a) }))
       .sort((x, y) => (rank[x.tier] ?? 2) - (rank[y.tier] ?? 2) || x.agent.localeCompare(y.agent));
-    text(`SUSPENDED  ${susp.length}`, PAD, groundY + 22, 10, C.white);
-    text('SNAPSHOT STORE', W - PAD, groundY + 22, 8, C.dim, 'right');
-    const per = Math.floor((W - 2 * PAD) / 18), maxN = per * 5;
-    const slotXY = i => [PAD + (i % per) * 18, groundY + 32 + Math.floor(i / per) * 15];
+    const sy = G.sy;
+    text(`SUSPENDED  ${susp.length}`, G.sx0, sy + 22, 10, C.white);
+    text('SNAPSHOT STORE', G.sx1, sy + 22, 8, C.dim, 'right');
+    const per = Math.max(1, Math.floor((G.sx1 - G.sx0 + G.markStep - 8 * G.markPx) / G.markStep)), maxN = per * G.markRows;
+    const gy = sy + 22 + 12 * fs;
+    const slotXY = i => [G.sx0 + (i % per) * G.markStep, gy + Math.floor(i / per) * G.markRow];
     const shown = susp.slice(0, maxN);
-    shown.forEach((x, i) => { const [ix, iy] = slotXY(i); sprite(SPR.mark, ix, iy, 2, tierInfo(x.tier).color); });
+    shown.forEach((x, i) => { const [ix, iy] = slotXY(i); sprite(SPR.mark, ix, iy, G.markPx, tierInfo(x.tier).color); });
     // where a newly suspended agent of each tier lands: the end of its tier's run
     const endOf = {};
     shown.forEach((x, i) => { endOf[x.tier] = i + 1; });
@@ -1113,34 +1151,37 @@ const arcade = (() => {
     // per-agent counts in priority colours, wrapping
     const counts = [];
     for (const x of susp) { const last = counts[counts.length - 1]; if (last && last.agent === x.agent && last.tier === x.tier) last.n++; else counts.push({ ...x, n: 1 }); }
-    let cx2 = PAD, cy2 = groundY + 32 + Math.max(1, Math.ceil(shown.length / per)) * 15 + 12;
-    ctx.font = `8.5px ${FONT}`;
+    let cx2 = G.sx0, cy2 = gy + Math.max(1, Math.ceil(shown.length / per)) * G.markRow + 12 * fs;
     for (const c of counts) {
-      const label = `${c.n} ${c.agent.toUpperCase()}`, w = ctx.measureText(label).width;
-      if (cx2 + w > W - PAD && cx2 > PAD) { cx2 = PAD; cy2 += 13; }
-      text(label, cx2, cy2, 8.5, tierInfo(c.tier).color); cx2 += w + 12;
+      const label = `${c.n} ${c.agent.toUpperCase()}`, w = textW(label, 8.5);
+      if (cx2 + w > G.sx1 && cx2 > G.sx0) { cx2 = G.sx0; cy2 += 13 * fs; }
+      text(label, cx2, cy2, 8.5, tierInfo(c.tier).color); cx2 += w + 12 * fs;
     }
 
     // capsules: a shot invader drops into its place in the store
+    const mw = 8 * G.markPx / 2, mh = 6 * G.markPx / 2;
     for (const k of capsules) {
-      const u = Math.min(1, (t - k.at) / 900), [dx1, dy1] = storeDest(k.tier);
-      const x = k.x0 + (dx1 + 8 - k.x0) * (u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
-      const y = k.y0 + (dy1 + 6 - k.y0) * u * u;            // falls, accelerating
-      if (u < 1) sprite(SPR.mark, x - 8, y - 6, 2, tierInfo(k.tier).color, 1, true);
+      const u = Math.min(1, (t - k.at) / (G.land ? 1100 : 900)), [dx1, dy1] = storeDest(k.tier);
+      const x = k.x0 + (dx1 + mw - k.x0) * (u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
+      const y = k.y0 + (dy1 + mh - k.y0) * (G.land ? (u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2) : u * u);
+      if (u < 1) sprite(SPR.mark, x - mw, y - mh, G.markPx, tierInfo(k.tier).color, 1, true);
       else {
-        const v = (t - k.at - 900) / 350;                    // landing ping
+        const v = (t - k.at - (G.land ? 1100 : 900)) / 350;          // landing ping
         ctx.save(); ctx.globalAlpha = Math.max(0, 1 - v); ctx.strokeStyle = tierInfo(k.tier).color; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(dx1 + 8, dy1 + 6, 6 + v * 10, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+        ctx.beginPath(); ctx.arc(dx1 + mw, dy1 + mh, 6 + v * 10, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
       }
     }
-    capsules = capsules.filter(k => t - k.at < 1250);
+    capsules = capsules.filter(k => t - k.at < (G.land ? 1450 : 1250));
 
-    // last few events
-    (s.events || []).slice(-3).reverse().forEach((e, i) => {
+    // event feed: under the store in landscape, at the bottom in portrait
+    const nEv = G.land ? 7 : 3;
+    const evY = G.land ? Math.max(cy2 + 34 * fs, H - 64 - (nEv - 1) * 18 * fs) : H - 56;
+    if (G.land) text('EVENTS', G.sx0, evY - 18 * fs, 8, C.dim);
+    (s.events || []).slice(-nEv).reverse().forEach((e, i) => {
       const c = { restore: C.green, suspend: C.blue, create: C.blue, error: C.red }[e.kind] || C.white;
       const tag = { restore: '▲', suspend: '▼', error: '✕' }[e.kind] || '•';
       const txt = `${tag} ${e.agent} ${e.text.replace(/→ (\S+)/, (_, pod) => '→ ' + short(pod))}`.toUpperCase();
-      text(txt, PAD, H - 56 + i * 16, 8.5, c, 'left', W - 2 * PAD);
+      text(txt, G.sx0, evY + i * (G.land ? 18 : 16) * (G.land ? fs : 1), G.land ? 7.5 : 8.5, c, 'left', G.sx1 - G.sx0);
     });
 
     raf = requestAnimationFrame(frame);
@@ -1287,6 +1328,10 @@ function toggle(what) {
   if (what === 'theme') {
     theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
     try { localStorage.setItem('hud.theme', theme); } catch {}
+    // invaders has its own 16:9 stage in wide mode: resize stage (and window) if it changed
+    const was = `${W}x${H}`;
+    setLayout(layout);
+    if (win && TAURI.window.LogicalSize && was !== `${W}x${H}`) win.setSize(new TAURI.window.LogicalSize(W, H)).catch(() => {});
     toast({ invaders: 'Space Invaders', timeline: 'Timeline', bars: 'Bars', rings: 'Rings', wb: 'Whiteboard', glass: 'Glass' }[theme]);
     if (last && !sim) render(last);
   }

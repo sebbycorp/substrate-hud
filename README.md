@@ -48,6 +48,9 @@ is a column with a hangar; a running agent's invader, coloured by priority (red
 high, white coding, blue low), leaves the hangar and slowly falls, and the cannon
 shoots it down when it checkpoints (restore and checkpoint latencies pop up).
 Errors fly past as the red UFO; agents waiting for a worker hover in red.
+Landscape: `?theme=invaders&layout=wide` (or **L** in the app) is a full 16:9
+**1280×720** stage: playfield on the left, snapshot store and event feed on the
+right. Use a 1280×720 or 1920×1080 Browser Source.
 A shot invader drops into the SUSPENDED row (the snapshot store), which is
 coloured by priority and grouped by agent with counts. `?theme=timeline`: a lane per worker showing the last 2 minutes
 (`?window=5` for 5), where each session leaves a block labelled with its agent,
