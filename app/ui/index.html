@@ -158,6 +158,11 @@
   body.portrait #error { left: 18px; right: 18px; top: auto; bottom: 14px; white-space: normal; }
   .ev .n { color: var(--red); font-weight: 800; margin-left: 4px; }
 
+  /* ── invaders: everything is drawn on one canvas ── */
+  #arcade { position: absolute; left: 0; top: 0; display: none; }
+  body.invaders #arcade { display: block; }
+  body.invaders #stage > :not(#arcade):not(#backdrop) { display: none; }
+
   /* ── pool usage graphs (rings) ── */
   body:not(.rings) #charts { display: none; }
   #charts .chart { position: absolute; overflow: visible; }
@@ -318,7 +323,7 @@
 </svg>
 <div id="bar">
   <button id="bLayout" title="Portrait rail / wide strip (L)">LAYOUT</button>
-  <button id="bTheme" title="Cycle look: rings / timeline / bars / whiteboard / glass (W)">THEME</button>
+  <button id="bTheme" title="Cycle look: rings / invaders / timeline / bars / whiteboard / glass (W)">THEME</button>
   <button id="bBack" title="Board / panel behind the HUD (B) — off is transparent">BOARD</button>
   <button id="bTop" title="Keep on top (P)">ON TOP</button>
   <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
@@ -348,6 +353,7 @@
   <div id="pooltags"></div>
   <div id="timeline"></div>
   <div id="charts"></div>
+  <canvas id="arcade"></canvas>
   <div id="bays"></div>
   <div class="band-label" id="lblStore">SNAPSHOT STORE<b id="storeCount"></b></div>
   <div class="rule" id="ruleStore"></div>
@@ -391,9 +397,9 @@ const bp = params.get('board') ?? params.get('panel');
 let backdrop = bp != null ? bp !== '0' : (TAURI ? store.get('board', false) : false);
 let sim = params.get('sim') === '1';
 // whiteboard is the default look; ?theme=glass (or W in the app) for the transparent one
-const THEMES = ['rings', 'timeline', 'bars', 'wb', 'glass'];
+const THEMES = ['rings', 'invaders', 'timeline', 'bars', 'wb', 'glass'];
 // The theme actually drawn: the timeline needs the tall rail, so wide falls back to bars.
-const vt = () => (theme === 'timeline' && layout === 'wide' ? 'bars' : theme);
+const vt = () => ((theme === 'timeline' || theme === 'invaders') && layout === 'wide' ? 'bars' : theme);
 const savedTheme = (() => { try { return localStorage.getItem('hud.theme'); } catch { return null; } })();
 let theme = THEMES.includes(params.get('theme')) ? params.get('theme') : (TAURI && THEMES.includes(savedTheme) ? savedTheme : 'rings');
 setLayout(params.has('layout') ? (params.get('layout') === 'wide' ? 'wide' : 'portrait')
@@ -527,6 +533,7 @@ function layoutBays(workers, pools) {
 
 function render(s) {
   last = s;
+  if (vt() === 'invaders') { arcade.feed(s); return; }
   const now = s.now || Date.now();
   // header
   const pool = s.pools[0];
@@ -759,6 +766,177 @@ function renderTimeline(lanes, sessions, now) {
   }
   el.innerHTML = out.join('');
 }
+
+// ── Space Invaders look ─────────────────────────────────────────────────
+// Pools are formation rows, workers are slots, a running agent is an invader.
+// When an agent checkpoints, the cannon at the bottom shoots it down.
+const arcade = (() => {
+  const SPR = {
+    crabA: ['  X     X  ', '   X   X   ', '  XXXXXXX  ', ' XX XXX XX ', 'XXXXXXXXXXX', 'X XXXXXXX X', 'X X     X X', '   XX XX   '],
+    crabB: ['  X     X  ', 'X  X   X  X', 'X XXXXXXX X', 'XXX XXX XXX', 'XXXXXXXXXXX', ' XXXXXXXXX ', '  X     X  ', ' X       X '],
+    cannon: ['      X      ', '     XXX     ', '     XXX     ', ' XXXXXXXXXXX ', 'XXXXXXXXXXXXX', 'XXXXXXXXXXXXX', 'XXXXXXXXXXXXX', 'XXXXXXXXXXXXX'],
+    boom: ['    X   X    ', ' X   X X   X ', '  X       X  ', '   X     X   ', 'XX         XX', '   X     X   ', '  X  X X  X  ', ' X   X X   X '],
+    ufo: ['     XXXXXX     ', '   XXXXXXXXXX   ', '  XXXXXXXXXXXX  ', ' XX XX XX XX XX ', 'XXXXXXXXXXXXXXXX', '  XXX  XX  XXX  ', '   X        X   '],
+    mark: ['  XXXX  ', ' XXXXXXX', 'XXXXXXXX', 'XX....XX', 'XX.X.XXX', 'XXXXXX  '],
+  };
+  const C = { green: '#34f0a4', white: '#ffffff', blue: '#4aa3ff', red: '#ff4f61', dim: 'rgba(255,255,255,.82)' };
+  const FONT = '"Silom", "Monaco", "Menlo", monospace';
+  const PX = 3, SLOT = 52, ROWH = 62;
+  let cv, ctx, snap = null, raf = 0;
+  const occ = new Map();      // worker -> { actor, agent, since, born }
+  let doomed = [];            // { worker, agent, x, y, fired, hitAt }
+  let shots = [];             // { x, y, ty, target }
+  let booms = [];             // { x, y, at }
+  let ufos = [];              // { at, text }
+  let lastErr = 0, cannonX = null, fired = 0, hits = 0;
+
+  function sprite(rows, x, y, px, color, alpha = 1) {
+    ctx.globalAlpha = alpha; ctx.fillStyle = color;
+    rows.forEach((r, j) => { for (let i = 0; i < r.length; i++) if (r[i] === 'X') ctx.fillRect(x + i * px, y + j * px, px, px); });
+    ctx.globalAlpha = 1;
+  }
+  function text(t, x, y, size, color, align = 'left', maxW = 0) {
+    ctx.font = `${size}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align;
+    if (maxW && ctx.measureText(t).width > maxW) {   // shorten to fit, e.g. under one invader
+      while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
+      t += '…';
+    }
+    ctx.fillText(t, x, y);
+  }
+
+  // positions are recomputed from the snapshot every frame (march offset applied when drawn)
+  function layoutSlots(s) {
+    const groups = groupWorkers(s.workers, s.pools), out = [], rows = [];
+    let y = 128;
+    for (const g of groups) {
+      rows.push({ pool: g.pool, y, tier: tierOf(g.pool), workers: g.workers });
+      const per = Math.max(1, Math.floor((W - 2 * PAD - 24) / SLOT));
+      g.workers.forEach((wk, i) => out.push({ wk, x: PAD + 14 + (i % per) * SLOT, y: y + 16 + Math.floor(i / per) * ROWH }));
+      y += 16 + Math.max(1, Math.ceil(g.workers.length / per)) * ROWH;
+    }
+    return { slots: out, rows, bottom: y };
+  }
+
+  function feed(s) {
+    snap = s;
+    const on = new Map();
+    for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) on.set(a.worker, a);
+    const { slots } = layoutSlots(s);
+    const where = new Map(slots.map(sl => [sl.wk.name, sl]));
+    // agents that left their worker get shot down
+    for (const [w, o] of occ) {
+      const cur = on.get(w);
+      if (!cur || cur.name !== o.actor) {
+        const sl = where.get(w);
+        if (sl) doomed.push({ worker: w, agent: o.agent, x: sl.x, y: sl.y, fired: false, hitAt: 0 });
+        occ.delete(w);
+      }
+    }
+    for (const [w, a] of on) if (!occ.has(w)) occ.set(w, { actor: a.name, agent: a.agent, since: a.since, born: performance.now() });
+    for (const [w, o] of occ) { const a = on.get(w); if (a) o.since = a.since; }
+    // a new ate-api error sends the mystery ship across
+    for (const e of s.events || []) if (e.kind === 'error' && e.id > lastErr) { lastErr = e.id; ufos.push({ at: performance.now(), text: e.agent }); }
+    if (!raf) raf = requestAnimationFrame(frame);
+  }
+
+  function frame(t) {
+    raf = 0;
+    if (vt() !== 'invaders' || !snap) return;
+    const dpr = 3;
+    if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
+    const s = snap, now = s.now ? s.now + (Date.now() - (s._recv || Date.now())) : Date.now();
+
+    // score header
+    const ready = s.workers.filter(w => w.ready).length, desired = s.pools.reduce((a, p) => a + p.desired, 0);
+    const running = s.actors.filter(a => a.state === 'running').length;
+    text('AGENT SUBSTRATE', PAD, 34, 11, C.white);
+    text(sim ? 'SIMULATED' : (s.connected ? 'LIVE' : 'OFFLINE'), W - PAD, 34, 9, sim ? C.blue : s.connected ? C.green : C.red, 'right');
+    text((s.context || '').toUpperCase(), PAD, 50, 7.5, C.dim);
+    const cols = [['SCORE', String(s.stats.suspends).padStart(4, '0'), C.white], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0'), C.white],
+                  ['INVADERS', String(running), C.green], ['WORKERS', `${ready}/${desired}`, C.white]];
+    cols.forEach(([k, v, c], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 74, 7, C.dim); text(v, x, 93, 15, c); });
+
+    // formation
+    const { slots, rows, bottom } = layoutSlots(s);
+    const step = Math.floor(t / 650), dx = [0, 4, 8, 12, 8, 4][step % 6] - 6, frameB = step % 2 === 1;
+    for (const r of rows) {
+      const busy = r.workers.filter(w => occ.has(w.name)).length;
+      const tc = { high: C.red, coding: C.white }[r.tier] || C.blue;
+      text(({ high: 'HIGH PRIORITY', coding: 'CODING', low: 'LOW PRIORITY' }[r.tier] || r.tier.toUpperCase()), PAD, r.y + 8, 9.5, tc);
+      text(`${busy}/${r.workers.length} BUSY`, W - PAD, r.y + 8, 9, busy && busy === r.workers.length ? C.red : C.white, 'right');
+    }
+    for (const sl of slots) {
+      const x = sl.x + dx, y = sl.y, o = occ.get(sl.wk.name);
+      if (o) {
+        const age = t - o.born, flicker = age < 500 && Math.floor(age / 70) % 2 === 0;
+        if (!flicker) sprite(frameB ? SPR.crabB : SPR.crabA, x, y, PX, C.green);
+        text(o.agent || 'agent', x + 16, y + 36, 7.5, C.green, 'center', SLOT - 4);
+      } else if (!doomed.some(d => d.worker === sl.wk.name && !d.hitAt)) {
+        sprite(SPR.crabA, x, y, PX, C.white, sl.wk.ready ? .22 : .1);
+      }
+    }
+    // finished agents wait (white) for the cannon
+    for (const d of doomed) if (!d.hitAt) sprite(frameB ? SPR.crabB : SPR.crabA, d.x + dx, d.y, PX, C.white);
+
+    // cannon: glide under the next doomed invader, then fire
+    const groundY = Math.max(bottom + 70, Math.min(H - 220, bottom + 190)), cy = groundY - 30;
+    if (cannonX == null) cannonX = W / 2 - 19;
+    const target = doomed.find(d => !d.fired);
+    if (target) {
+      const tx = target.x + dx + 16 - 19, dist = tx - cannonX, v = 6;
+      if (Math.abs(dist) <= v) { cannonX = tx; target.fired = true; fired++; shots.push({ x: cannonX + 19, y: cy, target }); }
+      else cannonX += Math.sign(dist) * v;
+    }
+    sprite(SPR.cannon, cannonX, cy, PX, C.white);
+    ctx.fillStyle = C.green; ctx.fillRect(PAD, groundY, W - 2 * PAD, 2);
+    for (const sh of shots) {
+      sh.y -= 14;
+      ctx.fillStyle = C.white; ctx.fillRect(sh.x - 1, sh.y, 2, 10);
+      if (sh.y <= sh.target.y + 20) { hits++; sh.target.hitAt = t; booms.push({ x: sh.target.x + dx - 1, y: sh.target.y, at: t }); sh.done = true; }
+    }
+    shots = shots.filter(sh => !sh.done);
+    for (const b of booms) sprite(SPR.boom, b.x, b.y, PX, C.white, 1 - (t - b.at) / 450);
+    booms = booms.filter(b => t - b.at < 450);
+    doomed = doomed.filter(d => !d.hitAt);
+
+    // mystery ship for errors
+    for (const u of ufos) {
+      const k = (t - u.at) / 4500, x = -50 + k * (W + 100);
+      sprite(SPR.ufo, x, 104, 2, C.red);
+      text(u.text || 'error', x + 16, 102, 7, C.red, 'center');
+    }
+    ufos = ufos.filter(u => t - u.at < 4500);
+
+    // reserve: checkpointed agents in the snapshot store
+    const stored = s.actors.filter(a => a.state === 'suspended').length;
+    text(`RESERVE  ${stored}`, PAD, groundY + 20, 8, C.blue);
+    const per = Math.floor((W - 2 * PAD) / 18);
+    for (let i = 0; i < Math.min(stored, per * 5); i++) sprite(SPR.mark, PAD + (i % per) * 18, groundY + 28 + Math.floor(i / per) * 15, 2, C.blue);
+
+    // last few events
+    const evs = (s.events || []).slice(-3).reverse();
+    evs.forEach((e, i) => {
+      const c = { restore: C.green, suspend: C.blue, create: C.blue, error: C.red }[e.kind] || C.white;
+      const tag = { restore: '▲', suspend: '▼', error: '✕' }[e.kind] || '•';
+      const txt = `${tag} ${e.agent} ${e.text.replace(/→ (\S+)/, (_, pod) => '→ ' + short(pod))}`.toUpperCase();
+      text(txt.length > 46 ? txt.slice(0, 45) + '…' : txt, PAD, H - 50 + i * 13, 6.5, c);
+    });
+
+    raf = requestAnimationFrame(frame);
+  }
+
+  return {
+    init() { cv = $('arcade'); ctx = cv.getContext('2d'); },
+    feed(s) { s._recv = Date.now(); feed(s); },
+    start() { if (!raf && snap) raf = requestAnimationFrame(frame); },
+    get stats() { return { fired, hits, waiting: doomed.length, invaders: occ.size }; },
+  };
+})();
+arcade.init();
+
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
 
 // ── data: Tauri events in the app, SSE in a browser / OBS source ───────
@@ -848,11 +1026,13 @@ function apply() {
   document.body.classList.toggle('bars', v === 'bars');
   document.body.classList.toggle('timeline', v === 'timeline');
   document.body.classList.toggle('bold', v === 'rings' || v === 'bars' || v === 'timeline');
+  document.body.classList.toggle('invaders', v === 'invaders');
+  if (v === 'invaders') arcade.start();
   document.body.classList.toggle('backdrop', backdrop);
   document.body.classList.toggle('board', theme === 'wb' && backdrop);
   document.body.classList.toggle('clickthru', clickThru);
   $('bBack').classList.toggle('on', backdrop);
-  $('bTheme').textContent = { timeline: 'TIMELINE', bars: 'BARS', rings: 'RINGS', wb: 'WHITEBOARD', glass: 'GLASS' }[theme];
+  $('bTheme').textContent = { invaders: 'INVADERS', timeline: 'TIMELINE', bars: 'BARS', rings: 'RINGS', wb: 'WHITEBOARD', glass: 'GLASS' }[theme];
   $('bTop').classList.toggle('on', onTop);
   $('bClick').classList.toggle('on', clickThru);
   $('bSim').classList.toggle('on', sim);
@@ -873,7 +1053,7 @@ function toggle(what) {
   if (what === 'theme') {
     theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
     try { localStorage.setItem('hud.theme', theme); } catch {}
-    toast({ timeline: 'Timeline', bars: 'Bars', rings: 'Rings', wb: 'Whiteboard', glass: 'Glass' }[theme]);
+    toast({ invaders: 'Space Invaders', timeline: 'Timeline', bars: 'Bars', rings: 'Rings', wb: 'Whiteboard', glass: 'Glass' }[theme]);
     if (last && !sim) render(last);
   }
   if (what === 'layout') {
