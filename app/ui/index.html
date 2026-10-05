@@ -374,6 +374,7 @@ let layout = 'portrait', W, H, PAD;
 // ── fit the stage to any window / OBS source size ──────────────────────
 function fit() {
   const s = Math.min(innerWidth / W, innerHeight / H);
+  window.stageScale = s;
   $('stage').style.transform = `scale(${s}) translate(-50%, -50%)`;
 }
 addEventListener('resize', fit);
@@ -768,73 +769,89 @@ function renderTimeline(lanes, sessions, now) {
 }
 
 // ── Space Invaders look ─────────────────────────────────────────────────
-// Pools are formation rows, workers are slots, a running agent is an invader.
-// When an agent checkpoints, the cannon at the bottom shoots it down.
+// Each worker is a column with a hangar at the top; colour = the pool's priority
+// (red high, white coding, blue low). A running agent's invader leaves the
+// hangar and slowly falls; when the agent checkpoints the cannon shoots it down.
 const arcade = (() => {
   const SPR = {
     crabA: ['  X     X  ', '   X   X   ', '  XXXXXXX  ', ' XX XXX XX ', 'XXXXXXXXXXX', 'X XXXXXXX X', 'X X     X X', '   XX XX   '],
     crabB: ['  X     X  ', 'X  X   X  X', 'X XXXXXXX X', 'XXX XXX XXX', 'XXXXXXXXXXX', ' XXXXXXXXX ', '  X     X  ', ' X       X '],
+    squidA: ['   XX   ', '  XXXX  ', ' XXXXXX ', 'XX XX XX', 'XXXXXXXX', '  X  X  ', ' X XX X ', 'X X  X X'],
+    squidB: ['   XX   ', '  XXXX  ', ' XXXXXX ', 'XX XX XX', 'XXXXXXXX', ' X XX X ', 'X      X', ' X    X '],
+    octoA: ['    XXXX    ', ' XXXXXXXXXX ', 'XXXXXXXXXXXX', 'XXX  XX  XXX', 'XXXXXXXXXXXX', '   XX  XX   ', '  XX XX XX  ', 'XX        XX'],
+    octoB: ['    XXXX    ', ' XXXXXXXXXX ', 'XXXXXXXXXXXX', 'XXX  XX  XXX', 'XXXXXXXXXXXX', '  XXX  XXX  ', ' XX  XX  XX ', '  XX    XX  '],
     cannon: ['      X      ', '     XXX     ', '     XXX     ', ' XXXXXXXXXXX ', 'XXXXXXXXXXXXX', 'XXXXXXXXXXXXX', 'XXXXXXXXXXXXX', 'XXXXXXXXXXXXX'],
     boom: ['    X   X    ', ' X   X X   X ', '  X       X  ', '   X     X   ', 'XX         XX', '   X     X   ', '  X  X X  X  ', ' X   X X   X '],
     ufo: ['     XXXXXX     ', '   XXXXXXXXXX   ', '  XXXXXXXXXXXX  ', ' XX XX XX XX XX ', 'XXXXXXXXXXXXXXXX', '  XXX  XX  XXX  ', '   X        X   '],
     mark: ['  XXXX  ', ' XXXXXXX', 'XXXXXXXX', 'XX....XX', 'XX.X.XXX', 'XXXXXX  '],
+    flash: ['X X X', ' XXX ', 'XXXXX'],
   };
   const C = { green: '#34f0a4', white: '#ffffff', blue: '#4aa3ff', red: '#ff4f61', dim: 'rgba(255,255,255,.82)' };
+  const TIER = { high: { color: C.red, name: 'HIGH', sp: ['squidA', 'squidB'] },
+                 coding: { color: C.white, name: 'CODING', sp: ['crabA', 'crabB'] },
+                 low: { color: C.blue, name: 'LOW', sp: ['octoA', 'octoB'] } };
+  const tierInfo = t => TIER[t] || TIER.low;
   const FONT = '"Silom", "Monaco", "Menlo", monospace';
-  const PX = 3, SLOT = 52, ROWH = 62;
-  let cv, ctx, snap = null, raf = 0;
+  const HANGAR = 146, FALL_START = HANGAR + 34, FALL_FULL = 60_000;  // ms to fall all the way
+  let cv, ctx, snap = null, raf = 0, px = 3;
   const occ = new Map();      // worker -> { actor, agent, since, born }
-  let doomed = [];            // { worker, agent, x, y, fired, hitAt }
-  let shots = [];             // { x, y, ty, target }
-  let booms = [];             // { x, y, at }
-  let ufos = [];              // { at, text }
+  let doomed = [], shots = [], booms = [], ufos = [], popups = [], flashes = [];
   let lastErr = 0, cannonX = null, fired = 0, hits = 0;
 
-  function sprite(rows, x, y, px, color, alpha = 1) {
+  let dpr = 3;
+  // Each sprite pixel is snapped to whole device pixels so the art stays crisp at any size.
+  function sprite(rows, x, y, p, color, alpha = 1) {
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = alpha; ctx.fillStyle = color;
-    rows.forEach((r, j) => { for (let i = 0; i < r.length; i++) if (r[i] === 'X') ctx.fillRect(x + i * px, y + j * px, px, px); });
-    ctx.globalAlpha = 1;
+    const P = Math.max(1, Math.round(p * dpr)), X0 = Math.round(x * dpr), Y0 = Math.round(y * dpr);
+    rows.forEach((r, j) => { for (let i = 0; i < r.length; i++) if (r[i] === 'X') ctx.fillRect(X0 + i * P, Y0 + j * P, P, P); });
+    ctx.restore();
+  }
+  function invader(tier, b, cx, y, color, alpha = 1) {      // centred on cx
+    const rows = SPR[tierInfo(tier).sp[b ? 1 : 0]];
+    sprite(rows, cx - (rows[0].length * px) / 2, y, px, color, alpha);
   }
   function text(t, x, y, size, color, align = 'left', maxW = 0) {
     ctx.font = `${size}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align;
-    if (maxW && ctx.measureText(t).width > maxW) {   // shorten to fit, e.g. under one invader
+    if (maxW && ctx.measureText(t).width > maxW) {
       while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
       t += '…';
     }
     ctx.fillText(t, x, y);
   }
 
-  // positions are recomputed from the snapshot every frame (march offset applied when drawn)
-  function layoutSlots(s) {
-    const groups = groupWorkers(s.workers, s.pools), out = [], rows = [];
-    let y = 128;
-    for (const g of groups) {
-      rows.push({ pool: g.pool, y, tier: tierOf(g.pool), workers: g.workers });
-      const per = Math.max(1, Math.floor((W - 2 * PAD - 24) / SLOT));
-      g.workers.forEach((wk, i) => out.push({ wk, x: PAD + 14 + (i % per) * SLOT, y: y + 16 + Math.floor(i / per) * ROWH }));
-      y += 16 + Math.max(1, Math.ceil(g.workers.length / per)) * ROWH;
-    }
-    return { slots: out, rows, bottom: y };
+  // one column per worker, grouped by pool (high, coding, low)
+  function columns(s) {
+    const groups = groupWorkers(s.workers, s.pools), cols = [];
+    const n = Math.max(1, groups.reduce((k, g) => k + g.workers.length, 0)), cw = (W - 2 * PAD) / n;
+    let i = 0;
+    for (const g of groups) for (const wk of g.workers) cols.push({ wk, tier: tierOf(g.pool), cx: PAD + cw * (i++ + .5), cw });
+    return { cols, groups, cw };
   }
+  const groundOf = () => H - 230;
+  const fallY = (since, now) => FALL_START + Math.min(1, Math.max(0, now - since) / FALL_FULL) * (groundOf() - 120 - FALL_START);
 
   function feed(s) {
-    snap = s;
+    snap = s; s._recv = Date.now();
+    const now = s.now || Date.now();
     const on = new Map();
     for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) on.set(a.worker, a);
-    const { slots } = layoutSlots(s);
-    const where = new Map(slots.map(sl => [sl.wk.name, sl]));
-    // agents that left their worker get shot down
-    for (const [w, o] of occ) {
+    const where = new Map(columns(s).cols.map(c => [c.wk.name, c]));
+    for (const [w, o] of occ) {                     // left its worker: shoot it where it is
       const cur = on.get(w);
       if (!cur || cur.name !== o.actor) {
-        const sl = where.get(w);
-        if (sl) doomed.push({ worker: w, agent: o.agent, x: sl.x, y: sl.y, fired: false, hitAt: 0 });
+        const c = where.get(w);
+        if (c) doomed.push({ worker: w, actor: o.actor, tier: c.tier, cx: c.cx, y: fallY(o.since, now), fired: false, hitAt: 0 });
         occ.delete(w);
       }
     }
-    for (const [w, a] of on) if (!occ.has(w)) occ.set(w, { actor: a.name, agent: a.agent, since: a.since, born: performance.now() });
+    const sess = s.sessions || [];
+    for (const [w, a] of on) if (!occ.has(w)) {
+      occ.set(w, { actor: a.name, agent: a.agent, since: a.since, born: performance.now() });
+      const ss = [...sess].reverse().find(x => x.actor === a.name && x.end == null), c = where.get(w);
+      if (c) popups.push({ x: c.cx, y: FALL_START - 4, text: ss?.restore_ms != null ? `+${ss.restore_ms}MS` : 'RESTORED', color: C.green, at: performance.now() });
+    }
     for (const [w, o] of occ) { const a = on.get(w); if (a) o.since = a.since; }
-    // a new ate-api error sends the mystery ship across
     for (const e of s.events || []) if (e.kind === 'error' && e.id > lastErr) { lastErr = e.id; ufos.push({ at: performance.now(), text: e.agent }); }
     if (!raf) raf = requestAnimationFrame(frame);
   }
@@ -842,87 +859,128 @@ const arcade = (() => {
   function frame(t) {
     raf = 0;
     if (vt() !== 'invaders' || !snap) return;
-    const dpr = 3;
-    if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
+    // backing store = exactly the device pixels the stage covers (stage scale × Retina)
+    dpr = Math.max(1, (window.devicePixelRatio || 1) * (window.stageScale || 1));
+    const bw = Math.round(W * dpr), bh = Math.round(H * dpr);
+    if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, W, H);
     ctx.shadowColor = 'rgba(0,0,0,.85)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
-    const s = snap, now = s.now ? s.now + (Date.now() - (s._recv || Date.now())) : Date.now();
+    const s = snap, now = (s.now || Date.now()) + (Date.now() - (s._recv || Date.now()));
+    const { cols, groups, cw } = columns(s);
+    px = Math.min(3, (cw - 3) / 12);
+    const step = Math.floor(t / 650), dx = ([0, 2, 4, 2][step % 4] - 2) * (cw > 40 ? 2 : 1), frameB = step % 2 === 1;
 
     // score header
     const ready = s.workers.filter(w => w.ready).length, desired = s.pools.reduce((a, p) => a + p.desired, 0);
-    const running = s.actors.filter(a => a.state === 'running').length;
-    text('AGENT SUBSTRATE', PAD, 34, 11, C.white);
-    text(sim ? 'SIMULATED' : (s.connected ? 'LIVE' : 'OFFLINE'), W - PAD, 34, 9, sim ? C.blue : s.connected ? C.green : C.red, 'right');
-    text((s.context || '').toUpperCase(), PAD, 50, 7.5, C.dim);
-    const cols = [['SCORE', String(s.stats.suspends).padStart(4, '0'), C.white], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0'), C.white],
-                  ['INVADERS', String(running), C.green], ['WORKERS', `${ready}/${desired}`, C.white]];
-    cols.forEach(([k, v, c], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 74, 7, C.dim); text(v, x, 93, 15, c); });
+    text('AGENT SUBSTRATE', PAD, 34, 13, C.white);
+    text(sim ? 'SIMULATED' : (s.connected ? 'LIVE' : 'OFFLINE'), W - PAD, 34, 10, sim ? C.blue : s.connected ? C.green : C.red, 'right');
+    text((s.context || '').toUpperCase(), PAD, 51, 9, C.dim);
+    [['SCORE', String(s.stats.suspends).padStart(4, '0')], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0')],
+     ['INVADERS', String(occ.size)], ['WORKERS', `${ready}/${desired}`]]
+      .forEach(([k, v], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 76, 8.5, C.dim); text(v, x, 97, 18, i === 2 ? C.green : C.white); });
+    if (Math.floor(t / 500) % 2) text('1UP', PAD + 40, 76, 8.5, C.red);
 
-    // formation
-    const { slots, rows, bottom } = layoutSlots(s);
-    const step = Math.floor(t / 650), dx = [0, 4, 8, 12, 8, 4][step % 6] - 6, frameB = step % 2 === 1;
-    for (const r of rows) {
-      const busy = r.workers.filter(w => occ.has(w.name)).length;
-      const tc = { high: C.red, coding: C.white }[r.tier] || C.blue;
-      text(({ high: 'HIGH PRIORITY', coding: 'CODING', low: 'LOW PRIORITY' }[r.tier] || r.tier.toUpperCase()), PAD, r.y + 8, 9.5, tc);
-      text(`${busy}/${r.workers.length} BUSY`, W - PAD, r.y + 8, 9, busy && busy === r.workers.length ? C.red : C.white, 'right');
+    // colour legend = priority, with busy counts
+    let lx = PAD;
+    for (const g of groups) {
+      const ti = tierInfo(tierOf(g.pool)), busy = g.workers.filter(w => occ.has(w.name)).length, n = g.workers.length;
+      const label = `${ti.name} ${busy}/${n}`;
+      ctx.fillStyle = ti.color; ctx.fillRect(lx, 118, 8, 8);
+      text(label, lx + 12, 126, 10, busy && busy === n ? C.red : ti.color);
+      ctx.font = `10px ${FONT}`; lx += 12 + ctx.measureText(label).width + 14;
     }
-    for (const sl of slots) {
-      const x = sl.x + dx, y = sl.y, o = occ.get(sl.wk.name);
-      if (o) {
-        const age = t - o.born, flicker = age < 500 && Math.floor(age / 70) % 2 === 0;
-        if (!flicker) sprite(frameB ? SPR.crabB : SPR.crabA, x, y, PX, C.green);
-        text(o.agent || 'agent', x + 16, y + 36, 7.5, C.green, 'center', SLOT - 4);
-      } else if (!doomed.some(d => d.worker === sl.wk.name && !d.hitAt)) {
-        sprite(SPR.crabA, x, y, PX, C.white, sl.wk.ready ? .22 : .1);
+
+    // hangars: one per worker, dim until its invader is out
+    for (const c of cols) {
+      const out = occ.has(c.wk.name) || doomed.some(d => d.worker === c.wk.name);
+      invader(c.tier, false, c.cx, HANGAR, tierInfo(c.tier).color, out ? .12 : (c.wk.ready ? .32 : .14));
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(PAD, HANGAR + 28, W - 2 * PAD, 1);
+
+    // falling invaders, in their pool's colour
+    for (const c of cols) {
+      const o = occ.get(c.wk.name); if (!o) continue;
+      const color = tierInfo(c.tier).color, y = fallY(o.since, now), x = c.cx + dx, age = t - o.born;
+      if (age < 600) {   // tractor beam out of the hangar
+        ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 10; ctx.globalAlpha = .5 * (1 - age / 600);
+        ctx.fillStyle = color; ctx.fillRect(c.cx - 6, HANGAR + 20, 12, y - HANGAR); ctx.restore();
       }
+      if (!(age < 500 && Math.floor(age / 70) % 2 === 0)) {
+        ctx.save(); ctx.shadowColor = color; ctx.shadowBlur = 6; invader(c.tier, frameB, x, y, color); ctx.restore();
+      }
+      text(o.agent || 'agent', c.cx, y + 35, 8.5, color, 'center', Math.max(34, cw - 2));
+      text(`${Math.max(0, Math.round((now - o.since) / 1000))}S`, c.cx, y + 46, 8, C.dim, 'center');
     }
-    // finished agents wait (white) for the cannon
-    for (const d of doomed) if (!d.hitAt) sprite(frameB ? SPR.crabB : SPR.crabA, d.x + dx, d.y, PX, C.white);
+    for (const d of doomed) if (!d.hitAt) invader(d.tier, frameB, d.cx + dx, d.y, C.white);
 
-    // cannon: glide under the next doomed invader, then fire
-    const groundY = Math.max(bottom + 70, Math.min(H - 220, bottom + 190)), cy = groundY - 30;
+    // agents resuming with no free worker hover in red above the hangars
+    const known = new Set(cols.map(c => c.wk.name));
+    const waiting = s.actors.filter(a => a.state === 'resuming' && (!a.worker || !known.has(a.worker)) && now - a.since > 1500);
+    if (waiting.length) {
+      waiting.slice(0, 6).forEach((a, i) => invader('low', frameB, W / 2 - (Math.min(waiting.length, 6) - 1) * 20 + i * 40, 98, C.red));
+      if (Math.floor(t / 400) % 2) text(`POOL FULL · ${waiting.length} WAITING`, W / 2, 140, 10, C.red, 'center');
+    }
+
+    // cannon: glide under the next finished invader, then fire
+    const groundY = groundOf(), cy = groundY - 30;
     if (cannonX == null) cannonX = W / 2 - 19;
     const target = doomed.find(d => !d.fired);
     if (target) {
-      const tx = target.x + dx + 16 - 19, dist = tx - cannonX, v = 6;
-      if (Math.abs(dist) <= v) { cannonX = tx; target.fired = true; fired++; shots.push({ x: cannonX + 19, y: cy, target }); }
-      else cannonX += Math.sign(dist) * v;
+      const tx = target.cx + dx - 19, dist = tx - cannonX, v = 6;
+      if (Math.abs(dist) <= v) {
+        cannonX = tx; target.fired = true; fired++;
+        shots.push({ x: cannonX + 19, y: cy, target }); flashes.push({ x: cannonX + 19, y: cy - 4, at: t });
+      } else cannonX += Math.sign(dist) * v;
     }
-    sprite(SPR.cannon, cannonX, cy, PX, C.white);
+    sprite(SPR.cannon, cannonX, cy, 3, C.white);
     ctx.fillStyle = C.green; ctx.fillRect(PAD, groundY, W - 2 * PAD, 2);
+    for (const f of flashes) sprite(SPR.flash, f.x - 7, f.y - 6, 3, C.white, 1 - (t - f.at) / 140);
+    flashes = flashes.filter(f => t - f.at < 140);
+    ctx.save(); ctx.shadowColor = C.green; ctx.shadowBlur = 8;
     for (const sh of shots) {
-      sh.y -= 14;
-      ctx.fillStyle = C.white; ctx.fillRect(sh.x - 1, sh.y, 2, 10);
-      if (sh.y <= sh.target.y + 20) { hits++; sh.target.hitAt = t; booms.push({ x: sh.target.x + dx - 1, y: sh.target.y, at: t }); sh.done = true; }
+      sh.y -= 16;
+      ctx.fillStyle = C.white; ctx.fillRect(sh.x - 1.5, sh.y, 3, 12);
+      if (sh.y <= sh.target.y + 20) {
+        hits++; sh.target.hitAt = t; sh.done = true;
+        booms.push({ x: sh.target.cx + dx - 19, y: sh.target.y, at: t });
+        const done = [...(s.sessions || [])].reverse().find(x => x.actor === sh.target.actor && x.end != null);
+        popups.push({ x: sh.target.cx + dx, y: sh.target.y - 2, text: '+1', color: C.white, at: t });
+        popups.push({ x: sh.target.cx + dx, y: sh.target.y + 34, text: done?.checkpoint_ms != null ? `CKPT ${done.checkpoint_ms}MS` : 'CHECKPOINTED', color: C.blue, at: t });
+      }
     }
+    ctx.restore();
     shots = shots.filter(sh => !sh.done);
-    for (const b of booms) sprite(SPR.boom, b.x, b.y, PX, C.white, 1 - (t - b.at) / 450);
+    for (const b of booms) sprite(SPR.boom, b.x, b.y, 3, C.white, 1 - (t - b.at) / 450);
     booms = booms.filter(b => t - b.at < 450);
     doomed = doomed.filter(d => !d.hitAt);
+    for (const p of popups) {
+      const k = (t - p.at) / 1300;
+      ctx.globalAlpha = Math.max(0, 1 - k); text(p.text, p.x, p.y - k * 18, 9, p.color, 'center'); ctx.globalAlpha = 1;
+    }
+    popups = popups.filter(p => t - p.at < 1300);
 
     // mystery ship for errors
     for (const u of ufos) {
       const k = (t - u.at) / 4500, x = -50 + k * (W + 100);
-      sprite(SPR.ufo, x, 104, 2, C.red);
-      text(u.text || 'error', x + 16, 102, 7, C.red, 'center');
+      sprite(SPR.ufo, x, 100, 2, C.red);
+      text(u.text || 'error', x + 16, 98, 8.5, C.red, 'center');
     }
     ufos = ufos.filter(u => t - u.at < 4500);
 
     // reserve: checkpointed agents in the snapshot store
     const stored = s.actors.filter(a => a.state === 'suspended').length;
-    text(`RESERVE  ${stored}`, PAD, groundY + 20, 8, C.blue);
+    text(`RESERVE  ${stored}`, PAD, groundY + 22, 10, C.blue);
     const per = Math.floor((W - 2 * PAD) / 18);
-    for (let i = 0; i < Math.min(stored, per * 5); i++) sprite(SPR.mark, PAD + (i % per) * 18, groundY + 28 + Math.floor(i / per) * 15, 2, C.blue);
+    for (let i = 0; i < Math.min(stored, per * 5); i++) sprite(SPR.mark, PAD + (i % per) * 18, groundY + 32 + Math.floor(i / per) * 15, 2, C.blue);
 
     // last few events
-    const evs = (s.events || []).slice(-3).reverse();
-    evs.forEach((e, i) => {
+    (s.events || []).slice(-3).reverse().forEach((e, i) => {
       const c = { restore: C.green, suspend: C.blue, create: C.blue, error: C.red }[e.kind] || C.white;
       const tag = { restore: '▲', suspend: '▼', error: '✕' }[e.kind] || '•';
       const txt = `${tag} ${e.agent} ${e.text.replace(/→ (\S+)/, (_, pod) => '→ ' + short(pod))}`.toUpperCase();
-      text(txt.length > 46 ? txt.slice(0, 45) + '…' : txt, PAD, H - 50 + i * 13, 6.5, c);
+      text(txt, PAD, H - 56 + i * 16, 8.5, c, 'left', W - 2 * PAD);
     });
 
     raf = requestAnimationFrame(frame);
@@ -930,7 +988,7 @@ const arcade = (() => {
 
   return {
     init() { cv = $('arcade'); ctx = cv.getContext('2d'); },
-    feed(s) { s._recv = Date.now(); feed(s); },
+    feed,
     start() { if (!raf && snap) raf = requestAnimationFrame(frame); },
     get stats() { return { fired, hits, waiting: doomed.length, invaders: occ.size }; },
   };
@@ -986,7 +1044,7 @@ function simTick() {
   for (const a of s.actors) {
     if (a.state === 'resuming' && now - a.since > 260) {
       const ms = now - a.since; a.state = 'running'; a.since = now; s.stats.resumes++;
-      s.sessions.push({ actor: a.name, agent: a.agent, worker: a.worker, start: now - ms, end: null });
+      s.sessions.push({ actor: a.name, agent: a.agent, worker: a.worker, start: now - ms, end: null, restore_ms: ms, checkpoint_ms: null });
       s.sessions = s.sessions.filter(x => x.end == null || x.end > now - 15 * 60_000).slice(-400);
       s._lat.push(ms); s._lat = s._lat.slice(-30);
       s.stats.p50_restore_ms = [...s._lat].sort((x, y) => x - y)[s._lat.length >> 1];
@@ -996,7 +1054,7 @@ function simTick() {
       delete a._dur;
       a.state = 'suspending'; a.since = now;
     } else if (a.state === 'suspending' && now - a.since > 140) {
-      for (const x of s.sessions) if (x.actor === a.name && x.end == null) x.end = now;
+      for (const x of s.sessions) if (x.actor === a.name && x.end == null) { x.end = now; x.checkpoint_ms = 110 + (Math.random() * 60 | 0); }
       a.state = 'suspended'; a.worker = null; a.since = now; s.stats.suspends++;
       ev('suspend', a.agent, `checkpointed to storage · ${110 + (Math.random() * 60 | 0)} ms`);
     }

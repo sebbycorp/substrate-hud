@@ -75,6 +75,9 @@ pub struct Session {
     pub start: i64,
     /// None while the actor is still on the worker.
     pub end: Option<i64>,
+    /// resuming→running and suspending→suspended latencies, when seen in the logs.
+    pub restore_ms: Option<i64>,
+    pub checkpoint_ms: Option<i64>,
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -126,10 +129,12 @@ struct Snapshot<'a> {
 }
 
 impl Model {
-    pub fn open_session(&mut self, actor: &str, agent: &str, worker: Option<String>, ts: i64) {
-        self.close_session(actor, ts);
+    pub fn open_session(&mut self, actor: &str, agent: &str, worker: Option<String>, ts: i64, restore_ms: Option<i64>) {
+        self.close_session(actor, ts, None);
         let Some(worker) = worker else { return };
-        self.sessions.push_back(Session { actor: actor.into(), agent: agent.into(), worker, start: ts, end: None });
+        self.sessions.push_back(Session {
+            actor: actor.into(), agent: agent.into(), worker, start: ts, end: None, restore_ms, checkpoint_ms: None,
+        });
         // keep ~15 minutes of history, bounded
         let cutoff = now_ms() - 15 * 60_000;
         self.sessions.retain(|s| s.end.map_or(true, |e| e >= cutoff));
@@ -138,9 +143,10 @@ impl Model {
         }
     }
 
-    pub fn close_session(&mut self, actor: &str, ts: i64) {
+    pub fn close_session(&mut self, actor: &str, ts: i64, checkpoint_ms: Option<i64>) {
         for s in self.sessions.iter_mut().filter(|s| s.actor == actor && s.end.is_none()) {
             s.end = Some(ts.max(s.start));
+            s.checkpoint_ms = checkpoint_ms;
         }
     }
 

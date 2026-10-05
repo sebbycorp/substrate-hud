@@ -316,8 +316,8 @@ pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
                 // DB-inferred transitions (no log line seen) still show on the timeline
                 for (name, agent, worker) in moves {
                     match worker {
-                        Some(_) => m.open_session(&name, &agent, worker, now),
-                        None => m.close_session(&name, now),
+                        Some(_) => m.open_session(&name, &agent, worker, now, None),
+                        None => m.close_session(&name, now, None),
                     }
                 }
                 m.actors
@@ -462,12 +462,13 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
                     m.push_event(ts, "restore", &label, format!("restored{on}{lat}"));
                     // the stay began when the worker was picked (resuming), else now
                     let start = ms.map_or(ts, |ms| ts - ms);
-                    m.open_session(&name, &label, worker, start);
+                    m.open_session(&name, &label, worker, start, ms);
                 }
                 "suspending" => {}
                 "suspended" => {
                     a.worker = None;
-                    m.close_session(&name, ts);
+                    let ckpt = (prev_state == "suspending").then(|| ts - prev_since);
+                    m.close_session(&name, ts, ckpt);
                     if op == "create" {
                         m.stats.creates += 1;
                         m.push_event(ts, "create", &label, "created · golden snapshot".into());

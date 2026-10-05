@@ -43,9 +43,11 @@ Hover the app window → **OBS URL** copies it.
 
 Default look: **rings**: workers are circles that glow green with the agent
 inside while it runs, and each pool has a line graph of busy workers over the
-last 5 minutes (`?chart=10` for 10). `?theme=invaders`: Space Invaders, where
-running agents are invaders in their pool's row and the cannon shoots each one
-down when it checkpoints; errors fly past as the red UFO. `?theme=timeline`: a lane per worker showing the last 2 minutes
+last 5 minutes (`?chart=10` for 10). `?theme=invaders`: Space Invaders. Each worker
+is a column with a hangar; a running agent's invader, coloured by priority (red
+high, white coding, blue low), leaves the hangar and slowly falls, and the cannon
+shoots it down when it checkpoints (restore and checkpoint latencies pop up).
+Errors fly past as the red UFO; agents waiting for a worker hover in red. `?theme=timeline`: a lane per worker showing the last 2 minutes
 (`?window=5` for 5), where each session leaves a block labelled with its agent,
 green while running. The wide strip falls back to bars.
 Alternative, `?theme=bars`: one bar per worker pool with a segment per worker;
