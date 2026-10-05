@@ -899,7 +899,7 @@ const arcade = (() => {
     mark: ['  XXXX  ', ' XXXXXXX', 'XXXXXXXX', 'XX....XX', 'XX.X.XXX', 'XXXXXX  '],
     flash: ['X X X', ' XXX ', 'XXXXX'],
   };
-  const C = { green: '#34f0a4', white: '#ffffff', blue: '#4aa3ff', red: '#ff4f61', dim: 'rgba(255,255,255,.82)' };
+  const C = { green: '#34f0a4', white: '#ffffff', blue: '#5cb0ff', red: '#ff5a6b', dim: 'rgba(255,255,255,.93)' };
   const TIER = { high: { color: C.red, name: 'HIGH', sp: ['squidA', 'squidB'] },
                  coding: { color: C.white, name: 'CODING', sp: ['crabA', 'crabB'] },
                  low: { color: C.blue, name: 'LOW', sp: ['octoA', 'octoB'] } };
@@ -920,8 +920,8 @@ const arcade = (() => {
   function geo() {
     if (layout === 'wide') {
       const fx1 = Math.round(W * 0.68);
-      return { land: true, fx0: PAD, fx1, hangar: 150, ground: H - 64, legendY: 112, ufoY: 126, waitY: 96,
-               sx0: fx1 + 46, sx1: W - PAD, sy: 150, maxPx: 4.5, cpx: 4, fs: 1.3,
+      return { land: true, fx0: PAD, fx1, hangar: 166, ground: H - 52, legendY: 116, ufoY: 140, waitY: 104,
+               sx0: fx1 + 46, sx1: W - PAD, sy: 150, maxPx: 4.5, cpx: 4, fs: 1.7,
                markPx: 2.5, markStep: 25, markRow: 19, markRows: 8 };
     }
     return { land: false, fx0: PAD, fx1: W - PAD, hangar: 146, ground: H - 230, legendY: 118, ufoY: 100, waitY: 98,
@@ -965,11 +965,18 @@ const arcade = (() => {
   }
   // sizes are given for portrait and scaled by fs (bigger type in landscape)
   function text(t, x, y, size, color, align = 'left', maxW = 0) {
-    ctx.font = `${size * fs}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align;
+    const px2 = size * fs;
+    ctx.font = `${px2}px ${FONT}`; ctx.fillStyle = color; ctx.textAlign = align;
     if (maxW && ctx.measureText(t).width > maxW) {
       while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
       t += '…';
     }
+    // dark outline under the fill so text pops on any background
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.miterLimit = 2;
+    ctx.lineWidth = Math.max(2.5, px2 * 0.22); ctx.strokeStyle = 'rgba(0,0,0,.88)';
+    ctx.strokeText(t, x, y);
+    ctx.restore();
     ctx.fillText(t, x, y);
   }
   const textW = (t, size) => { ctx.font = `${size * fs}px ${FONT}`; return ctx.measureText(t).width; };
@@ -1022,13 +1029,13 @@ const arcade = (() => {
     const stats = [['SCORE', String(s.stats.suspends).padStart(4, '0')], ['HI-SCORE', String(s.stats.resumes).padStart(4, '0')],
                    ['INVADERS', String(occ.size)], ['WORKERS', `${ready}/${desired}`]];
     if (G.land) {
-      text('AGENT SUBSTRATE', PAD, 46, 13, C.white);
+      text('AGENT SUBSTRATE', PAD, 40, 13, C.white);
       const ctxTxt = sim ? '' : `${(s.context || '').toUpperCase()}  ·  `;
-      text(ctxTxt, PAD, 70, 9, C.dim);
-      text(status, PAD + (ctxTxt ? textW(ctxTxt, 9) : 0), 70, 9, sc);
-      const x0 = Math.round(W * 0.42), step = (W - PAD - x0) / 4;
-      stats.forEach(([k, v], i) => { const x = x0 + i * step; text(k, x, 38, 8.5, C.dim); text(v, x, 68, 18, i === 2 ? C.green : C.white); });
-      if (Math.floor(t / 500) % 2) text('1UP', x0 + textW('SCORE ', 8.5), 38, 8.5, C.red);
+      text(ctxTxt, PAD, 74, 9, C.dim);
+      text(status, PAD + (ctxTxt ? textW(ctxTxt, 9) : 0), 74, 9, sc);
+      const x0 = Math.round(W * 0.44), step = (W - PAD - x0) / 4;
+      stats.forEach(([k, v], i) => { const x = x0 + i * step; text(k, x, 30, 8.5, C.dim); text(v, x, 74, 18, i === 2 ? C.green : C.white); });
+      if (Math.floor(t / 500) % 2) text('1UP', x0 + textW('SCORE ', 8.5), 30, 8.5, C.red);
       return;
     }
     text('AGENT SUBSTRATE', PAD, 34, 13, C.white);
@@ -1193,14 +1200,14 @@ const arcade = (() => {
     capsules = capsules.filter(k => t - k.at < (G.land ? 1450 : 1250));
 
     // event feed: under the store in landscape, at the bottom in portrait
-    const nEv = G.land ? 7 : 3;
-    const evY = G.land ? Math.max(cy2 + 34 * fs, H - 64 - (nEv - 1) * 18 * fs) : H - 56;
+    const nEv = G.land ? 5 : 3;
+    const evY = G.land ? Math.max(cy2 + 34 * fs, H - 52 - (nEv - 1) * 15 * fs) : H - 56;
     if (G.land) text('EVENTS', G.sx0, evY - 18 * fs, 8, C.dim);
     (s.events || []).slice(-nEv).reverse().forEach((e, i) => {
       const c = { restore: C.green, suspend: C.blue, create: C.blue, error: C.red }[e.kind] || C.white;
       const tag = { restore: '▲', suspend: '▼', error: '✕' }[e.kind] || '•';
       const txt = `${tag} ${e.agent} ${e.text.replace(/→ (\S+)/, (_, pod) => '→ ' + short(pod))}`.toUpperCase();
-      text(txt, G.sx0, evY + i * (G.land ? 18 : 16) * (G.land ? fs : 1), G.land ? 7.5 : 8.5, c, 'left', G.sx1 - G.sx0);
+      text(txt, G.sx0, evY + i * (G.land ? 15 * fs : 16), G.land ? 7 : 8.5, c, 'left', G.sx1 - G.sx0);
     });
 
     raf = requestAnimationFrame(frame);
