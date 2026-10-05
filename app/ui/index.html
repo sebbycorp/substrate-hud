@@ -158,6 +158,43 @@
   body.portrait #error { left: 18px; right: 18px; top: auto; bottom: 14px; white-space: normal; }
   .ev .n { color: var(--red); font-weight: 800; margin-left: 4px; }
 
+  /* ── whiteboard theme (default): marker on a board ───────────── */
+  body.wb {
+    --white: #1d2633; --dim: #5d6878; --faint: #b9c0ca;
+    --blue: #1f6fd1; --green: #11935a; --red: #d92b3a;
+    --sans: "Marker Felt", "Chalkboard SE", "Noteworthy", sans-serif;
+    --mono: "Chalkboard SE", "Noteworthy", "Marker Felt", sans-serif;
+  }
+  body.wb .stage { text-shadow: none; }
+  body.wb #backdrop { opacity: 1; background: #fbfbf8; border: 1.5px solid #cfd4db; border-radius: 16px;
+                      box-shadow: inset 0 0 0 5px #eceef1, inset 0 0 0 6.5px #d7dbe1, 0 8px 28px rgba(0, 0, 0, .28); }
+  body.wb .brand { font-weight: 400; font-size: 14px; letter-spacing: .05em; }
+  body.wb .ctx { font-size: 10px; font-weight: 400; }
+  body.wb .stat .k, body.wb .band-label, body.wb .live { font-weight: 400; font-size: 9px; letter-spacing: .08em; }
+  body.wb .band-label b { font-weight: 400; letter-spacing: .02em; }
+  body.wb .stat .v { font-weight: 400; font-size: 24px; letter-spacing: 0; }
+  body.wb .stat .v small { font-weight: 400; }
+  body.wb .rule { height: 2px; background: var(--white); opacity: .55; filter: url(#rough); }
+  /* boxes: border drawn on a pseudo-element so only the line wobbles, not the text */
+  body.wb .bay, body.wb .bay.busy { border-color: transparent; box-shadow: none; }
+  body.wb .bay::before { content: ''; position: absolute; inset: -1px; border: 2.2px solid #8c96a3;
+                         border-radius: 10px; filter: url(#rough); transition: border-color .5s, background .5s; }
+  body.wb .bay.high::before { border-color: var(--white); }
+  body.wb .bay.busy::before { border-color: var(--green); background: rgba(17, 147, 90, .09); }
+  body.wb .bay.warm::before { border-style: dashed; }
+  body.wb .bay .name { font-weight: 400; font-size: 11px; }
+  body.wb .bay .meta, body.wb .ptag b { font-weight: 400; letter-spacing: .08em; font-size: 8.5px; }
+  body.wb .bay .who { font-weight: 400; font-size: 10.5px; }
+  body.wb .ptag { font-size: 9px; font-weight: 400; }
+  body.wb .ptag::before { border-radius: 50%; filter: url(#roughS); }
+  body.wb .dot, body.wb .dot.running, body.wb .dot.resuming, body.wb .dot.suspending, body.wb .dot.waiting { filter: none; }
+  body.wb .dot svg { filter: url(#roughS); }
+  body.wb .dot.running svg { filter: url(#rough); }
+  body.wb #legend, body.wb #legend b { font-weight: 400; font-size: 9.5px; }
+  body.wb .ev { font-size: 9px; font-weight: 400; }
+  body.wb .ev .a, body.wb .ev .n { font-weight: 700; }
+  body.wb .live i { box-shadow: none; }
+
   /* ── app-window toolbar (never shown in OBS Browser Source) ───────── */
   #bar { position: fixed; top: 10px; right: 12px; left: 80px; display: none; flex-wrap: wrap;
          justify-content: flex-end; gap: 6px; opacity: 0;
@@ -179,8 +216,20 @@
 </head>
 <body>
 <div id="drag" data-tauri-drag-region></div>
+<!-- hand-drawn wobble for whiteboard strokes -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="7" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="4.2" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+  <filter id="roughS" x="-10%" y="-10%" width="120%" height="120%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.08" numOctaves="2" seed="3" result="n"/>
+    <feDisplacementMap in="SourceGraphic" in2="n" scale="1.2" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
 <div id="bar">
   <button id="bLayout" title="Portrait rail / wide strip (L)">LAYOUT</button>
+  <button id="bTheme" title="Whiteboard / glass look (W)">THEME</button>
   <button id="bBack" title="Dark panel behind the HUD (B)">PANEL</button>
   <button id="bTop" title="Keep on top (P)">ON TOP</button>
   <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
@@ -248,6 +297,8 @@ const store = {
 if (TAURI) document.body.classList.add('app');
 let backdrop = params.has('panel') ? params.get('panel') !== '0' : (TAURI ? store.get('panel', true) : false);
 let sim = params.get('sim') === '1';
+// whiteboard is the default look; ?theme=glass (or W in the app) for the transparent one
+let theme = params.has('theme') ? (params.get('theme') === 'glass' ? 'glass' : 'wb') : (TAURI && store.get('glass', false) ? 'glass' : 'wb');
 setLayout(params.has('layout') ? (params.get('layout') === 'wide' ? 'wide' : 'portrait')
                                : (TAURI && store.get('wide', false) ? 'wide' : 'portrait'));
 
@@ -553,9 +604,11 @@ setInterval(simTick, 300);
 const win = TAURI && TAURI.window && TAURI.window.getCurrentWindow ? TAURI.window.getCurrentWindow() : null;
 let onTop = TAURI ? store.get('top', false) : false, clickThru = false;
 function apply() {
-  document.body.classList.toggle('backdrop', backdrop);
+  document.body.classList.toggle('wb', theme === 'wb');
+  document.body.classList.toggle('backdrop', backdrop || theme === 'wb');
   document.body.classList.toggle('clickthru', clickThru);
   $('bBack').classList.toggle('on', backdrop);
+  $('bTheme').textContent = theme === 'wb' ? 'GLASS' : 'WHITEBOARD';
   $('bTop').classList.toggle('on', onTop);
   $('bClick').classList.toggle('on', clickThru);
   $('bSim').classList.toggle('on', sim);
@@ -573,6 +626,7 @@ function toggle(what) {
     if (clickThru && !onTop) { onTop = true; }
     toast(clickThru ? 'Click-through on · Esc to get clicks back' : 'Click-through off');
   }
+  if (what === 'theme') { theme = theme === 'wb' ? 'glass' : 'wb'; store.set('glass', theme === 'glass'); }
   if (what === 'layout') {
     setLayout(layout === 'portrait' ? 'wide' : 'portrait');
     store.set('wide', layout === 'wide');
@@ -584,6 +638,7 @@ function toggle(what) {
   apply();
 }
 $('bLayout').onclick = () => toggle('layout');
+$('bTheme').onclick = () => toggle('theme');
 $('bBack').onclick = () => toggle('panel');
 $('bTop').onclick = () => toggle('top');
 $('bClick').onclick = () => toggle('click');
@@ -597,6 +652,7 @@ addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey) return;
   const k = e.key.toLowerCase();
   if (k === 'l') toggle('layout');
+  else if (k === 'w') toggle('theme');
   else if (k === 'b') toggle('panel');
   else if (k === 'p') toggle('top');
   else if (k === 'i') toggle('click');

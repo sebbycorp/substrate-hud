@@ -41,7 +41,8 @@ the default; 640×1560 for crisper text). For the wide lower-third strip use
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
 
-Query params for the Browser Source: `?panel=1` adds the dark panel,
+Query params for the Browser Source: `?theme=glass` for the transparent
+glass look (default is the whiteboard), `?panel=1` adds the dark panel to glass,
 `?sim=1` forces simulated traffic.
 
 ## App window
@@ -50,6 +51,7 @@ Hover the top-right for controls, or use keys:
 
 | Key | |
 | --- | --- |
+| **W** | whiteboard (default) ⇄ glass look |
 | **L** | portrait rail ⇄ wide strip (resizes the window) |
 | **B** | dark panel behind the HUD (on by default in the window) |
 | **P** | keep on top |
