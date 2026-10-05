@@ -35,8 +35,8 @@ Icon: `python3 tools/make_icon.py app/src-tauri/icon-src.png && cargo tauri icon
 
 ## OBS
 
-Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width **320 × 840** (portrait side rail,
-the default; 640×1680 for crisper text). For the wide lower-third strip use
+Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width **320 × 880** (portrait side rail,
+the default; 640×1760 for crisper text). For the wide lower-third strip use
 `http://127.0.0.1:7788/?layout=wide` at 720 × 284.
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
@@ -61,6 +61,12 @@ a segment fills green while an agent runs in it, and each pool shows `busy/total
 Query params: `?theme=rings` (workers as circles), `?theme=wb` (whiteboard; add `?board=1` for the off-white board),
 `?theme=glass` (the clean glass look),
 `?sim=1` forces simulated traffic.
+
+## Branding
+
+The kagent logo (white wordmark, purple mark: `app/ui/kagent-logo-light.png`, made
+from the color logo) sits above *AGENT SUBSTRATE* in every look, and above the
+cards in the callouts view.
 
 ## Extras
 
