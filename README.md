@@ -7,6 +7,30 @@ moving in and out of workers as they restore and suspend. Built for OBS.
 White structure, **blue** = checkpointed / idle, **green** = running,
 **red** = errors, pool short of desired, or an agent waiting on a worker.
 
+## Screenshots
+
+**Space Invaders, landscape** (`?theme=invaders&layout=wide`): each worker is a
+column, a running agent's invader falls in its priority colour, and the cannon
+shoots it down when the agent checkpoints; the capsule drops into the snapshot store.
+
+![Space Invaders, landscape](docs/media/invaders-landscape.gif)
+
+<table>
+<tr>
+<td align="center"><b>Space Invaders, portrait</b><br><code>?theme=invaders</code></td>
+<td align="center"><b>Rings + usage graphs</b> (default)<br><code>?theme=rings</code></td>
+</tr>
+<tr>
+<td><img src="docs/media/invaders-portrait.gif" width="300" alt="Space Invaders, portrait"></td>
+<td><img src="docs/media/rings.gif" width="300" alt="Rings with per-pool usage graphs"></td>
+</tr>
+</table>
+
+Stills: [landscape](docs/media/invaders-landscape.png) ·
+[portrait](docs/media/invaders-portrait.png) · [rings](docs/media/rings.png).
+Captured in simulated mode (`?sim=1`) over a dark background; in OBS the
+background is transparent.
+
 ```
 kubectl (your kubeconfig, Omni OIDC)
   ├─ get workerpools / worker pods        every 3 s

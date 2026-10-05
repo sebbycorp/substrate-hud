@@ -1043,7 +1043,7 @@ const arcade = (() => {
     }
     text('AGENT SUBSTRATE', PAD + TITLE_INSET, 20, 13, C.white);
     text(status, W - PAD, 20, 10, sc, 'right');
-    text((s.context || '').toUpperCase(), PAD + TITLE_INSET, 38, 9, C.dim);
+    if (!sim) text((s.context || '').toUpperCase(), PAD + TITLE_INSET, 38, 9, C.dim);
     stats.forEach(([k, v], i) => { const x = PAD + i * ((W - 2 * PAD) / 4); text(k, x, 76, 8.5, C.dim); text(v, x, 97, 18, i === 2 ? C.green : C.white); });
     if (Math.floor(t / 500) % 2) text('1UP', PAD + 40, 76, 8.5, C.red);
   }
