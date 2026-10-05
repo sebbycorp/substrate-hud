@@ -87,7 +87,12 @@
   .bay.high { border-color: rgba(255, 255, 255, .85); }
   .ptag { position: absolute; font: 700 7.5px/1 var(--mono); color: var(--dim); white-space: nowrap; }
   .ptag b { font: 800 7.5px/1 var(--sans); letter-spacing: .18em; margin-left: 7px; color: var(--blue); }
-  .ptag.high b { color: var(--white); }
+  .ptag.t-high b { color: var(--red); }
+  .ptag.t-coding b { color: var(--white); }
+  .ptag::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 2px;
+                  margin-right: 7px; vertical-align: 0; background: var(--blue); }
+  .ptag.t-high::before { background: var(--red); }
+  .ptag.t-coding::before { background: var(--white); }
   .ptag span { margin-left: 7px; color: var(--dim); }
   .bay.in { opacity: 1; }
   .bay.busy { border-color: rgba(46, 229, 157, .75); box-shadow: 0 0 16px rgba(46, 229, 157, .12) inset; }
@@ -145,14 +150,13 @@
   body.portrait .band-label, body.portrait .rule { left: 18px; }
   body.portrait .rule { right: 18px; }
   body.portrait #lblPool { top: 172px; }
-  body.portrait #lblStore { top: 398px; }
-  body.portrait #ruleStore { top: 410px; }
-  body.portrait .bay .who { top: 23px; bottom: auto; right: 45%; }
-  body.portrait .bay .meta { top: auto; bottom: 8px; left: 9px; right: auto; }
-  body.portrait #legend { left: 18px; right: 18px; top: 538px; flex-wrap: wrap; row-gap: 6px; }
-  body.portrait #ticker { left: 18px; right: 18px; width: auto; top: 572px; flex-direction: column-reverse; }
+  /* store/legend/ticker tops are set in JS: sections stack to fit the pools */
+  body.portrait .bay .who { right: 45%; }
+  body.portrait #legend { left: 18px; right: 18px; flex-wrap: wrap; row-gap: 7px; }
+  body.portrait #ticker { left: 18px; right: 18px; width: auto; flex-direction: column-reverse; gap: 4px; }
   body.portrait .ev { text-align: left; }
-  body.portrait #error { left: 18px; right: 18px; top: 656px; white-space: normal; }
+  body.portrait #error { left: 18px; right: 18px; top: auto; bottom: 14px; white-space: normal; }
+  .ev .n { color: var(--red); font-weight: 800; margin-left: 4px; }
 
   /* ── app-window toolbar (never shown in OBS Browser Source) ───────── */
   #bar { position: fixed; top: 10px; right: 12px; left: 80px; display: none; flex-wrap: wrap;
@@ -218,7 +222,7 @@ const $ = id => document.getElementById(id);
 const TAURI = window.__TAURI__;
 const params = new URLSearchParams(location.search);
 // Portrait is a side rail (default); wide is a lower-third strip.
-const LAYOUTS = { portrait: { W: 320, H: 680, PAD: 18 }, wide: { W: 720, H: 284, PAD: 24 } };
+const LAYOUTS = { portrait: { W: 320, H: 780, PAD: 18 }, wide: { W: 720, H: 284, PAD: 24 } };
 let layout = 'portrait', W, H, PAD;
 
 // ── fit the stage to any window / OBS source size ──────────────────────
@@ -269,9 +273,14 @@ function ago(ms) {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
 }
 
-// Workers grouped by pool, high-priority pools (those with a PriorityClass) first.
+// A pool's tier: its substrate.viper-env/tier label, else "high" if it has a PriorityClass.
+function tierOf(p) { return p.tier || (p.priority_class ? 'high' : 'low'); }
+const TIER_LABEL = { high: 'HIGH PRIORITY', coding: 'CODING', low: 'LOW PRIORITY' };
+
+// Workers grouped by pool: high, then coding, then everything else.
 function groupWorkers(workers, pools) {
-  const order = [...pools].sort((a, b) => (b.priority_class ? 1 : 0) - (a.priority_class ? 1 : 0) || a.name.localeCompare(b.name));
+  const rank = p => ({ high: 0, coding: 1 })[tierOf(p)] ?? 2;
+  const order = [...pools].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
   const groups = order.map(pool => ({ pool, workers: workers.filter(w => w.pool === pool.name) }));
   const known = new Set(pools.map(p => p.name));
   const strays = workers.filter(w => !known.has(w.pool));
@@ -282,20 +291,20 @@ function groupWorkers(workers, pools) {
 // Returns bay rectangles keyed by worker name, plus one header per pool.
 function layoutBays(workers, pools) {
   const groups = groupWorkers(workers, pools);
-  const tiered = groups.length > 1 || groups.some(g => g.pool.priority_class);
+  const tiered = groups.length > 1 || groups.some(g => tierOf(g.pool) !== 'low');
   const n = Math.max(workers.length, 1), G = Math.max(groups.length, 1), pos = new Map(), tags = [];
-  const tag = (g, x, y) => tiered && tags.push({ key: g.pool.name, x, y, pool: g.pool, high: !!g.pool.priority_class });
+  const tag = (g, x, y) => tiered && tags.push({ key: g.pool.name, x, y, pool: g.pool, tier: tierOf(g.pool) });
   if (layout === 'portrait') {
-    // stacked full-width bays between the pool label and the store
-    const gap = 6, TAG = tiered ? 14 : 0, GROUP = 6;
-    const h = Math.min(58, (204 - G * TAG - (n - G) * gap - (G - 1) * GROUP) / n);
-    let y = 186;
+    // stacked full-width bays; shrink only when there are many workers
+    const gap = 8, TAG = tiered ? 18 : 0, GROUP = 12;
+    const h = Math.max(40, Math.min(52, (330 - G * TAG - (n - G) * gap - (G - 1) * GROUP) / n));
+    let y = 190;
     for (const g of groups) {
       tag(g, PAD, y); y += TAG;
       for (const wk of g.workers) { pos.set(wk.name, { x: PAD, y, w: W - PAD * 2, h }); y += h + gap; }
       y += GROUP - gap;
     }
-    return { pos, tags };
+    return { pos, tags, bottom: y - GROUP };
   }
   const gap = 10, GROUP = 22, avail = W - PAD * 2;
   const w = Math.min(200, (avail - (n - G) * gap - (G - 1) * GROUP) / n);
@@ -306,7 +315,7 @@ function layoutBays(workers, pools) {
     for (const wk of g.workers) { pos.set(wk.name, { x, y: 98, w, h: 72 }); x += w + gap; }
     x += GROUP - gap;
   }
-  return { pos, tags };
+  return { pos, tags, bottom: 170 };
 }
 
 function render(s) {
@@ -338,12 +347,12 @@ function render(s) {
   $('poolName').textContent = s.pools.length > 1 ? `${s.pools.length} pools  ·  gVisor` : pool ? `${pool.name}  ·  gVisor` : '';
 
   // bays
-  const { pos, tags } = layoutBays(workers, s.pools);
+  const { pos, tags, bottom } = layoutBays(workers, s.pools);
   $('lblPool').style.visibility = layout === 'wide' && tags.length ? 'hidden' : '';
   $('pooltags').innerHTML = tags.map(t =>
-    `<div class="ptag${t.high ? ' high' : ''}" style="left:${t.x}px;top:${t.y}px">${esc(t.pool.name)}` +
-    `<b>${t.high ? 'HIGH PRIORITY' : 'LOW PRIORITY'}</b><span>${t.pool.ready ?? 0}/${t.pool.desired ?? 0}</span></div>`).join('');
-  const highPools = new Set(tags.filter(t => t.high).map(t => t.key));
+    `<div class="ptag t-${esc(t.tier)}" style="left:${t.x}px;top:${t.y}px">${esc(t.pool.name)}` +
+    `<b>${TIER_LABEL[t.tier] || esc(t.tier.toUpperCase())}</b><span>${t.pool.ready ?? 0}/${t.pool.desired ?? 0}</span></div>`).join('');
+  const highPools = new Set(tags.filter(t => t.tier === 'high').map(t => t.key));
   const hosted = new Map();
   for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) {
     if (!hosted.has(a.worker)) hosted.set(a.worker, []);
@@ -365,7 +374,7 @@ function render(s) {
     const p = pos.get(wk.name);
     el.style.left = p.x + 'px'; el.style.width = p.w + 'px';
     el.style.top = p.y + 'px'; el.style.height = p.h + 'px';
-    el.classList.toggle('short', p.h < 50);
+    el.classList.toggle('short', p.h < 40);
     el.classList.toggle('high', highPools.has(wk.pool));
     const here = hosted.get(wk.name) || [];
     el.classList.toggle('busy', here.some(a => a.state === 'running'));
@@ -385,7 +394,10 @@ function render(s) {
 
   // dots: storage grid for suspended, bay slots for hosted, queue for orphans
   const portrait = layout === 'portrait';
-  const STORE_Y = portrait ? 422 : 204, STEP = 17, ROW = 15, storeW = W - PAD * 2 - (portrait ? 0 : 276);
+  const storeLbl = portrait ? bottom + 22 : 182;
+  if (portrait) { $('lblStore').style.top = storeLbl + 'px'; $('ruleStore').style.top = storeLbl + 12 + 'px'; }
+  else { $('lblStore').style.top = $('ruleStore').style.top = ''; }
+  const STORE_Y = portrait ? storeLbl + 22 : 204, STEP = 17, ROW = 15, storeW = W - PAD * 2 - (portrait ? 0 : 276);
   const perRow = Math.floor(storeW / STEP);
   const suspended = s.actors.filter(a => a.state === 'suspended' || (a.state === 'suspending' && !a.worker));
   const slot = new Map();
@@ -393,8 +405,8 @@ function render(s) {
   for (const [worker, list] of hosted) {
     const p = pos.get(worker); if (!p) continue;
     if (portrait) {
-      // right side of the bay, vertically centred, filling leftwards
-      list.forEach((a, i) => slot.set(a.name, { x: p.x + p.w - 37 - (i % 4) * 34, y: p.y + (p.h - 21) / 2 }));
+      // bottom-right of the bay (clear of the status line), filling leftwards
+      list.forEach((a, i) => slot.set(a.name, { x: p.x + p.w - 37 - (i % 4) * 34, y: p.y + p.h - 27 }));
       continue;
     }
     const per = Math.max(1, Math.floor((p.w - 18) / 34));
@@ -404,7 +416,8 @@ function render(s) {
   for (const a of s.actors) if (!slot.has(a.name)) {
     // resuming/suspending with an unknown or departed worker: hold mid-air
     const p = a.worker && pos.get(a.worker);
-    slot.set(a.name, p ? { x: p.x + p.w / 2 - 9, y: portrait ? 392 : 172 } : { x: W / 2 - 40 + (q++) * 22, y: portrait ? 392 : 174 });
+    const midY = portrait ? bottom + 6 : 172;
+    slot.set(a.name, p ? { x: p.x + p.w / 2 - 9, y: midY } : { x: W / 2 - 40 + (q++) * 22, y: midY });
   }
   const live2 = new Set();
   for (const a of s.actors) {
@@ -434,6 +447,12 @@ function render(s) {
   for (const a of s.actors) by.set(a.agent || 'agent', (by.get(a.agent || 'agent') || 0) + 1);
   $('legend').innerHTML = [...by].sort((a, b) => b[1] - a[1]).slice(0, 8)
     .map(([k, v]) => `<span><b>${v}</b>${esc(k)}</span>`).join('');
+  if (portrait) {
+    const storeBottom = STORE_Y + Math.max(1, Math.ceil(suspended.length / perRow)) * ROW;
+    const legendTop = storeBottom + 10;
+    $('legend').style.top = legendTop + 'px';
+    $('ticker').style.top = legendTop + $('legend').offsetHeight + 14 + 'px';
+  } else { $('legend').style.top = $('ticker').style.top = ''; }
 
   // ticker: newest first, last 7
   const tk = $('ticker');
@@ -441,13 +460,21 @@ function render(s) {
   const want = new Set(evs.map(e => e.id));
   for (const el of [...tk.children]) if (!want.has(+el.dataset.id)) el.remove();
   for (const e of evs) {
-    if (tk.querySelector(`[data-id="${e.id}"]`)) continue;
-    const el = document.createElement('div');
-    el.className = `ev ${e.kind}`; el.dataset.id = e.id;
+    let el = tk.querySelector(`[data-id="${e.id}"]`);
+    const sig = `${e.count || 1}|${e.ts}`;
+    if (el && el.dataset.sig === sig) continue;
+    if (!el) {
+      el = document.createElement('div');
+      el.className = `ev ${e.kind}`; el.dataset.id = e.id;
+      tk.appendChild(el);
+    }
+    el.dataset.sig = sig;
     const t = new Date(e.ts).toLocaleTimeString([], { hour12: false });
     const tag = { restore: '▲', suspend: '▼', create: '＋', error: '✕', info: '•' }[e.kind] || '•';
-    el.innerHTML = `${t}  <span class="tag">${tag}</span> <span class="a">${esc(e.agent)}</span> ${esc(e.text.replace(/→ (\S+)/, (_, pod) => '→ ' + short(pod)))}`;
-    tk.appendChild(el);
+    const text = e.kind === 'error' ? e.text.replace(/^Failed to reconcile actor template, requeueing: /, 'golden snapshot retrying: ')
+                                    : e.text.replace(/→ (\S+)/, (_, pod) => '→ ' + short(pod));
+    el.innerHTML = `${t}  <span class="tag">${tag}</span> <span class="a">${esc(e.agent)}</span> ${esc(text)}` +
+                   (e.count > 1 ? `<span class="n">×${e.count}</span>` : '');
   }
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
@@ -472,17 +499,18 @@ if (TAURI) {
 const simState = (() => {
   const agents = ['fortigate', 'k8s-assistant', 'sre-triage', 'billing-bot', 'docs-helper'];
   // one reserved high-tier worker, two shared low-tier workers
-  const workers = [['kagent-high', 'kagent-high-7d9f6c5b8-hi0aq'], ['kagent-default', 'kagent-default-5c8d7f9b4-sim1q'],
-                   ['kagent-default', 'kagent-default-5c8d7f9b4-sim2q']]
+  const workers = [['kagent-high', 'kagent-high-7d9f6c5b8-hi0aq'], ['kagent-coding', 'kagent-coding-5b79cd685-cd0aq'],
+                   ['kagent-default', 'kagent-default-5c8d7f9b4-sim1q'], ['kagent-default', 'kagent-default-5c8d7f9b4-sim2q']]
     .map(([pool, name], i) => ({ name, uid: 'u' + i, pool, phase: 'Running', ready: true, sessions: 0 }));
   const actors = Array.from({ length: 54 }, (_, i) => ({
-    name: `ai-sim-${i}`, uid: 's' + i, agent: i < 6 ? 'k8s-assistant-priority' : agents[i % 7 % agents.length],
+    name: `ai-sim-${i}`, uid: 's' + i, agent: i < 6 ? 'k8s-assistant-priority' : i < 10 ? 'codex-coder' : agents[i % 7 % agents.length],
     state: 'suspended', worker: null, since: Date.now(),
   }));
   const s = {
     context: 'simulated', connected: true, error: null, log_stream: true, now: Date.now(),
-    pools: [{ namespace: 'kagent', name: 'kagent-high', desired: 1, ready: 1, priority_class: 'substrate-high' },
-            { namespace: 'kagent', name: 'kagent-default', desired: 2, ready: 2, priority_class: '' }], workers, actors,
+    pools: [{ namespace: 'kagent', name: 'kagent-high', desired: 1, ready: 1, priority_class: 'substrate-high', tier: 'high' },
+            { namespace: 'kagent', name: 'kagent-coding', desired: 1, ready: 1, priority_class: '', tier: 'coding' },
+            { namespace: 'kagent', name: 'kagent-default', desired: 2, ready: 2, priority_class: '', tier: '' }], workers, actors,
     stats: { resumes: 0, suspends: 0, creates: 0, errors: 0, p50_restore_ms: null, events_per_min: 0 },
     events: [], _id: 0, _lat: [],
   };
@@ -509,10 +537,11 @@ function simTick() {
   }
   const busy = new Set(s.actors.filter(a => a.worker).map(a => a.worker));
   // each tier only schedules onto its own pool
-  for (const high of [true, false]) {
-    const free = s.workers.filter(w => !busy.has(w.name) && (w.pool === 'kagent-high') === high);
-    if (!free.length || Math.random() > (high ? 0.25 : 0.5)) continue;
-    const idle = s.actors.filter(a => a.state === 'suspended' && (a.agent === 'k8s-assistant-priority') === high);
+  const poolOf = a => a.agent === 'k8s-assistant-priority' ? 'kagent-high' : a.agent === 'codex-coder' ? 'kagent-coding' : 'kagent-default';
+  for (const pool of ['kagent-high', 'kagent-coding', 'kagent-default']) {
+    const free = s.workers.filter(w => !busy.has(w.name) && w.pool === pool);
+    if (!free.length || Math.random() > (pool === 'kagent-default' ? 0.5 : 0.25)) continue;
+    const idle = s.actors.filter(a => a.state === 'suspended' && poolOf(a) === pool);
     const a = idle[Math.random() * idle.length | 0];
     if (a) { a.state = 'resuming'; a.worker = free[Math.random() * free.length | 0].name; a.since = now; }
   }

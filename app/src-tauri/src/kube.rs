@@ -191,6 +191,7 @@ fn parse_pools(json: &str) -> Vec<Pool> {
                     desired: p["spec"]["replicas"].as_i64().unwrap_or(0),
                     ready: p["status"]["readyReplicas"].as_i64().unwrap_or(0),
                     priority_class: p["spec"]["template"]["priorityClassName"].as_str().unwrap_or("").into(),
+                    tier: p["metadata"]["labels"]["substrate.viper-env/tier"].as_str().unwrap_or("").into(),
                 })
                 .collect()
         })
@@ -250,7 +251,8 @@ const LOG_GRACE_MS: i64 = 45_000;
 
 pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
     let sql = "select a.name, a.uid, coalesce(wa.worker_name,''), encode(a.proto,'hex') \
-               from actors a left join worker_assignments wa on wa.actor_uid = a.uid";
+               from actors a left join worker_assignments wa on wa.actor_uid = a.uid \
+               where a.atespace <> 'ate-golden'"; // golden-snapshot builders aren't sessions
     loop {
         let res = run(
             &cfg,
@@ -299,7 +301,8 @@ pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
                         since: now,
                         log_touched: 0,
                     });
-                    if a.agent.is_empty() && !template.is_empty() {
+                    // Recompute each poll: the Harness list may have loaded since the first one.
+                    if !template.is_empty() {
                         a.agent = agent_label(&template);
                     }
                     if now - a.log_touched > LOG_GRACE_MS && (a.state != state || a.worker != worker) {
@@ -400,6 +403,9 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
     }
 
     if msg == "Actor state changed" {
+        if v["ate.atespace"].as_str() == Some("ate-golden") {
+            return;
+        }
         let name = v["ate.actor.name"].as_str().unwrap_or("").to_string();
         let uid = v["ate.actor.uid"].as_str().unwrap_or("").to_string();
         let agent = agent_label(v["ate.template.name"].as_str().unwrap_or(""));
@@ -475,9 +481,11 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
     if level == "ERROR" || lower.contains("no free worker") {
         let detail = v["err"].as_str().or(v["error"].as_str()).unwrap_or("");
         let text: String = if detail.is_empty() { msg.to_string() } else { format!("{msg}: {detail}") };
+        // Name the failing agent when the error is about an actor template.
+        let who = v["template"]["name"].as_str().map(agent_label).unwrap_or_else(|| "ate-api".into());
         hub.update(|m| {
             m.stats.errors += 1;
-            m.push_event(ts, "error", "ate-api", text.chars().take(160).collect());
+            m.push_event(ts, "error", &who, text.chars().take(160).collect());
         });
     }
 }

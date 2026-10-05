@@ -22,6 +22,8 @@ pub struct Pool {
     pub ready: i64,
     /// spec.template.priorityClassName; empty = default priority.
     pub priority_class: String,
+    /// metadata.labels["substrate.viper-env/tier"], e.g. "high", "coding".
+    pub tier: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -60,6 +62,8 @@ pub struct Event {
     pub kind: String,
     pub agent: String,
     pub text: String,
+    /// Identical consecutive events (a retry loop) collapse into one with a count.
+    pub count: u32,
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -110,6 +114,15 @@ struct Snapshot<'a> {
 
 impl Model {
     pub fn push_event(&mut self, ts: i64, kind: &str, agent: &str, text: String) {
+        self.stats.recent.push_back(now_ms());
+        if let Some(e) = self.events.iter_mut().rev().find(|e| e.kind == kind && e.agent == agent && e.text == text) {
+            // Same event already in the recent list: bump it instead of flooding the ticker.
+            if ts - e.ts < 10 * 60_000 {
+                e.count += 1;
+                e.ts = ts;
+                return;
+            }
+        }
         self.next_event += 1;
         self.events.push_back(Event {
             id: self.next_event,
@@ -117,11 +130,11 @@ impl Model {
             kind: kind.to_string(),
             agent: agent.to_string(),
             text,
+            count: 1,
         });
         while self.events.len() > 40 {
             self.events.pop_front();
         }
-        self.stats.recent.push_back(now_ms());
     }
 
     pub fn record_restore(&mut self, ms: i64) {
