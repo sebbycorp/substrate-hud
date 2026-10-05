@@ -159,14 +159,21 @@
   .ev .n { color: var(--red); font-weight: 800; margin-left: 4px; }
 
   /* ── whiteboard theme (default): marker on a board ───────────── */
+  /* Default: white marker straight on the (transparent) OBS scene.
+     .board puts it on an off-white board with dark marker instead. */
   body.wb {
-    --white: #1d2633; --dim: #5d6878; --faint: #b9c0ca;
-    --blue: #1f6fd1; --green: #11935a; --red: #d92b3a;
     --sans: "Marker Felt", "Chalkboard SE", "Noteworthy", sans-serif;
     --mono: "Chalkboard SE", "Noteworthy", "Marker Felt", sans-serif;
+    --stroke: rgba(255, 255, 255, .62);
   }
-  body.wb .stage { text-shadow: none; }
-  body.wb #backdrop { opacity: 1; background: #fbfbf8; border: 1.5px solid #cfd4db; border-radius: 16px;
+  body.wb .stage { text-shadow: 0 1px 3px rgba(0, 0, 0, .8), 0 0 2px rgba(0, 0, 0, .7); }
+  body.wb .bay::before, body.wb .rule, body.wb .dot svg { filter: url(#rough) drop-shadow(0 1px 2px rgba(0, 0, 0, .55)); }
+  body.wb.board {
+    --white: #1d2633; --dim: #5d6878; --faint: #b9c0ca;
+    --blue: #1f6fd1; --green: #11935a; --red: #d92b3a; --stroke: #8c96a3;
+  }
+  body.wb.board .stage { text-shadow: none; }
+  body.wb.board #backdrop { opacity: 1; background: #fbfbf8; border: 1.5px solid #cfd4db; border-radius: 16px;
                       box-shadow: inset 0 0 0 5px #eceef1, inset 0 0 0 6.5px #d7dbe1, 0 8px 28px rgba(0, 0, 0, .28); }
   body.wb .brand { font-weight: 400; font-size: 14px; letter-spacing: .05em; }
   body.wb .ctx { font-size: 10px; font-weight: 400; }
@@ -174,13 +181,15 @@
   body.wb .band-label b { font-weight: 400; letter-spacing: .02em; }
   body.wb .stat .v { font-weight: 400; font-size: 24px; letter-spacing: 0; }
   body.wb .stat .v small { font-weight: 400; }
-  body.wb .rule { height: 2px; background: var(--white); opacity: .55; filter: url(#rough); }
+  body.wb .rule { height: 2px; background: var(--white); opacity: .6; filter: url(#rough); }
+  body.wb.board .rule, body.wb.board .bay::before { filter: url(#rough); }
   /* boxes: border drawn on a pseudo-element so only the line wobbles, not the text */
   body.wb .bay, body.wb .bay.busy { border-color: transparent; box-shadow: none; }
-  body.wb .bay::before { content: ''; position: absolute; inset: -1px; border: 2.2px solid #8c96a3;
+  body.wb .bay::before { content: ''; position: absolute; inset: -1px; border: 2.2px solid var(--stroke);
                          border-radius: 10px; filter: url(#rough); transition: border-color .5s, background .5s; }
   body.wb .bay.high::before { border-color: var(--white); }
-  body.wb .bay.busy::before { border-color: var(--green); background: rgba(17, 147, 90, .09); }
+  body.wb .bay.busy::before { border-color: var(--green); background: rgba(46, 229, 157, .1); }
+  body.wb.board .bay.busy::before { background: rgba(17, 147, 90, .09); }
   body.wb .bay.warm::before { border-style: dashed; }
   body.wb .bay .name { font-weight: 400; font-size: 11px; }
   body.wb .bay .meta, body.wb .ptag b { font-weight: 400; letter-spacing: .08em; font-size: 8.5px; }
@@ -188,8 +197,10 @@
   body.wb .ptag { font-size: 9px; font-weight: 400; }
   body.wb .ptag::before { border-radius: 50%; filter: url(#roughS); }
   body.wb .dot, body.wb .dot.running, body.wb .dot.resuming, body.wb .dot.suspending, body.wb .dot.waiting { filter: none; }
-  body.wb .dot svg { filter: url(#roughS); }
-  body.wb .dot.running svg { filter: url(#rough); }
+  body.wb .dot svg { filter: url(#roughS) drop-shadow(0 1px 1.5px rgba(0, 0, 0, .6)); }
+  body.wb .dot.running svg { filter: url(#rough) drop-shadow(0 0 5px rgba(46, 229, 157, .6)); }
+  body.wb.board .dot svg { filter: url(#roughS); }
+  body.wb.board .dot.running svg { filter: url(#rough); }
   body.wb #legend, body.wb #legend b { font-weight: 400; font-size: 9.5px; }
   body.wb .ev { font-size: 9px; font-weight: 400; }
   body.wb .ev .a, body.wb .ev .n { font-weight: 700; }
@@ -230,7 +241,7 @@
 <div id="bar">
   <button id="bLayout" title="Portrait rail / wide strip (L)">LAYOUT</button>
   <button id="bTheme" title="Whiteboard / glass look (W)">THEME</button>
-  <button id="bBack" title="Dark panel behind the HUD (B)">PANEL</button>
+  <button id="bBack" title="Board / panel behind the HUD (B) — off is transparent">BOARD</button>
   <button id="bTop" title="Keep on top (P)">ON TOP</button>
   <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
   <button id="bSim" title="Simulated traffic (S)">SIM</button>
@@ -295,7 +306,9 @@ const store = {
   set(k, v) { try { localStorage.setItem('hud.' + k, v ? '1' : '0'); } catch {} },
 };
 if (TAURI) document.body.classList.add('app');
-let backdrop = params.has('panel') ? params.get('panel') !== '0' : (TAURI ? store.get('panel', true) : false);
+// B / ?board=1 (?panel=1): the whiteboard's board, or glass's dark panel. Off = transparent.
+const bp = params.get('board') ?? params.get('panel');
+let backdrop = bp != null ? bp !== '0' : (TAURI ? store.get('board', false) : false);
 let sim = params.get('sim') === '1';
 // whiteboard is the default look; ?theme=glass (or W in the app) for the transparent one
 let theme = params.has('theme') ? (params.get('theme') === 'glass' ? 'glass' : 'wb') : (TAURI && store.get('glass', false) ? 'glass' : 'wb');
@@ -605,7 +618,8 @@ const win = TAURI && TAURI.window && TAURI.window.getCurrentWindow ? TAURI.windo
 let onTop = TAURI ? store.get('top', false) : false, clickThru = false;
 function apply() {
   document.body.classList.toggle('wb', theme === 'wb');
-  document.body.classList.toggle('backdrop', backdrop || theme === 'wb');
+  document.body.classList.toggle('backdrop', backdrop);
+  document.body.classList.toggle('board', theme === 'wb' && backdrop);
   document.body.classList.toggle('clickthru', clickThru);
   $('bBack').classList.toggle('on', backdrop);
   $('bTheme').textContent = theme === 'wb' ? 'GLASS' : 'WHITEBOARD';
@@ -619,7 +633,7 @@ function apply() {
   }
 }
 function toggle(what) {
-  if (what === 'panel') { backdrop = !backdrop; store.set('panel', backdrop); }
+  if (what === 'panel') { backdrop = !backdrop; store.set('board', backdrop); }
   if (what === 'top') { onTop = !onTop; store.set('top', onTop); }
   if (what === 'click') {
     clickThru = !clickThru;

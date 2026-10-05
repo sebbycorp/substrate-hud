@@ -41,8 +41,9 @@ the default; 640×1560 for crisper text). For the wide lower-third strip use
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
 
-Query params for the Browser Source: `?theme=glass` for the transparent
-glass look (default is the whiteboard), `?panel=1` adds the dark panel to glass,
+Default look: whiteboard style (marker fonts, hand-drawn boxes) in white marker
+on a transparent background. Query params: `?board=1` puts it on an off-white
+board with dark marker, `?theme=glass` switches to the clean glass look,
 `?sim=1` forces simulated traffic.
 
 ## App window
@@ -53,7 +54,7 @@ Hover the top-right for controls, or use keys:
 | --- | --- |
 | **W** | whiteboard (default) ⇄ glass look |
 | **L** | portrait rail ⇄ wide strip (resizes the window) |
-| **B** | dark panel behind the HUD (on by default in the window) |
+| **B** | board (whiteboard) / dark panel (glass) behind the HUD; off = transparent |
 | **P** | keep on top |
 | **I** | click-through (Esc to exit) |
 | **S** | simulated traffic: for talks or when the cluster is idle |
