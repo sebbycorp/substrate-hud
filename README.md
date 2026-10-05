@@ -35,13 +35,18 @@ Icon: `python3 tools/make_icon.py app/src-tauri/icon-src.png && cargo tauri icon
 
 ## OBS
 
-Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width **320 × 780** (portrait side rail,
-the default; 640×1560 for crisper text). For the wide lower-third strip use
+Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width **320 × 840** (portrait side rail,
+the default; 640×1680 for crisper text). For the wide lower-third strip use
 `http://127.0.0.1:7788/?layout=wide` at 720 × 284.
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
 
-Default look: **bars**: one bar per worker pool with a segment per worker;
+Default look: **rings**: workers are circles that glow green with the agent
+inside while it runs, and each pool has a line graph of busy workers over the
+last 5 minutes (`?chart=10` for 10). `?theme=timeline`: a lane per worker showing the last 2 minutes
+(`?window=5` for 5), where each session leaves a block labelled with its agent,
+green while running. The wide strip falls back to bars.
+Alternative, `?theme=bars`: one bar per worker pool with a segment per worker;
 a segment fills green while an agent runs in it, and each pool shows `busy/total`
 (red when full). Bold white text with a strong shadow, transparent background.
 Query params: `?theme=rings` (workers as circles), `?theme=wb` (whiteboard; add `?board=1` for the off-white board),
@@ -54,7 +59,7 @@ Hover the top-right for controls, or use keys:
 
 | Key | |
 | --- | --- |
-| **W** | cycle the look: bars (default) → rings → whiteboard → glass |
+| **W** | cycle the look: rings (default) → timeline → bars → whiteboard → glass |
 | **L** | portrait rail ⇄ wide strip (resizes the window) |
 | **B** | board (whiteboard) / dark panel (glass) behind the HUD; off = transparent |
 | **P** | keep on top |

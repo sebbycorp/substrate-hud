@@ -291,6 +291,7 @@ pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
                     let state = if worker.is_some() { "running" } else { "suspended" };
                     updates.push((name.clone(), uid.clone(), worker, state, template_from_proto(proto)));
                 }
+                let mut moves = Vec::new();
                 for (name, uid, worker, state, template) in updates {
                     let a = m.actors.entry(name.clone()).or_insert_with(|| Actor {
                         name: name.clone(),
@@ -307,8 +308,16 @@ pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
                     }
                     if now - a.log_touched > LOG_GRACE_MS && (a.state != state || a.worker != worker) {
                         a.state = state.into();
-                        a.worker = worker;
+                        a.worker = worker.clone();
                         a.since = now;
+                        moves.push((name.clone(), a.agent.clone(), worker));
+                    }
+                }
+                // DB-inferred transitions (no log line seen) still show on the timeline
+                for (name, agent, worker) in moves {
+                    match worker {
+                        Some(_) => m.open_session(&name, &agent, worker, now),
+                        None => m.close_session(&name, now),
                     }
                 }
                 m.actors
@@ -449,12 +458,16 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
                         w.sessions += 1;
                     }
                     let lat = ms.map(|ms| format!(" · {ms} ms")).unwrap_or_default();
-                    let on = worker.map(|w| format!(" → {w}")).unwrap_or_default();
+                    let on = worker.as_ref().map(|w| format!(" → {w}")).unwrap_or_default();
                     m.push_event(ts, "restore", &label, format!("restored{on}{lat}"));
+                    // the stay began when the worker was picked (resuming), else now
+                    let start = ms.map_or(ts, |ms| ts - ms);
+                    m.open_session(&name, &label, worker, start);
                 }
                 "suspending" => {}
                 "suspended" => {
                     a.worker = None;
+                    m.close_session(&name, ts);
                     if op == "create" {
                         m.stats.creates += 1;
                         m.push_event(ts, "create", &label, "created · golden snapshot".into());

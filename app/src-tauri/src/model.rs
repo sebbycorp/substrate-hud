@@ -66,6 +66,17 @@ pub struct Event {
     pub count: u32,
 }
 
+/// One stay of an actor on a worker, for the activity timeline.
+#[derive(Clone, Serialize)]
+pub struct Session {
+    pub actor: String,
+    pub agent: String,
+    pub worker: String,
+    pub start: i64,
+    /// None while the actor is still on the worker.
+    pub end: Option<i64>,
+}
+
 #[derive(Default, Clone, Serialize)]
 pub struct Stats {
     pub resumes: u64,
@@ -93,6 +104,7 @@ pub struct Model {
     pub actors: HashMap<String, Actor>,
     pub stats: Stats,
     pub events: VecDeque<Event>,
+    pub sessions: VecDeque<Session>,
     next_event: u64,
     pub started: i64,
 }
@@ -110,9 +122,28 @@ struct Snapshot<'a> {
     actors: Vec<&'a Actor>,
     stats: &'a Stats,
     events: Vec<&'a Event>,
+    sessions: Vec<&'a Session>,
 }
 
 impl Model {
+    pub fn open_session(&mut self, actor: &str, agent: &str, worker: Option<String>, ts: i64) {
+        self.close_session(actor, ts);
+        let Some(worker) = worker else { return };
+        self.sessions.push_back(Session { actor: actor.into(), agent: agent.into(), worker, start: ts, end: None });
+        // keep ~15 minutes of history, bounded
+        let cutoff = now_ms() - 15 * 60_000;
+        self.sessions.retain(|s| s.end.map_or(true, |e| e >= cutoff));
+        while self.sessions.len() > 400 {
+            self.sessions.pop_front();
+        }
+    }
+
+    pub fn close_session(&mut self, actor: &str, ts: i64) {
+        for s in self.sessions.iter_mut().filter(|s| s.actor == actor && s.end.is_none()) {
+            s.end = Some(ts.max(s.start));
+        }
+    }
+
     pub fn push_event(&mut self, ts: i64, kind: &str, agent: &str, text: String) {
         self.stats.recent.push_back(now_ms());
         if let Some(e) = self.events.iter_mut().rev().find(|e| e.kind == kind && e.agent == agent && e.text == text) {
@@ -169,6 +200,7 @@ impl Model {
             actors,
             stats: &self.stats,
             events: self.events.iter().collect(),
+            sessions: self.sessions.iter().collect(),
         };
         serde_json::to_string(&snap).unwrap_or_else(|_| "{}".into())
     }
