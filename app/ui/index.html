@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Substrate HUD</title>
+<style>
+  :root {
+    --white: #f4f7fb;
+    --dim: rgba(244, 247, 251, 0.55);
+    --faint: rgba(244, 247, 251, 0.18);
+    --blue: #3d9bff;
+    --green: #2ee59d;
+    --red: #ff4d5e;
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: transparent;
+    color: var(--white);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    user-select: none; -webkit-user-select: none;
+  }
+  /* Legibility over busy scenes without a visible box. */
+  .stage { text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+
+  #stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 1280px; height: 720px;
+    transform-origin: 0 0;
+  }
+  #backdrop {
+    position: absolute; inset: 8px; border-radius: 22px;
+    background: rgba(8, 12, 20, .74);
+    border: 1px solid rgba(255, 255, 255, .06);
+    opacity: 0; transition: opacity .3s;
+  }
+  body.backdrop #backdrop { opacity: 1; }
+
+  /* ── header ─────────────────────────────────────────── */
+  header { position: absolute; left: 56px; right: 56px; top: 44px; height: 28px;
+           display: flex; align-items: center; gap: 14px; }
+  .brand { font: 600 13px/1 var(--sans); letter-spacing: .22em; }
+  .ctx { font: 500 13px/1 var(--mono); color: var(--dim); }
+  .live { margin-left: auto; display: flex; align-items: center; gap: 8px;
+          font: 600 11px/1 var(--sans); letter-spacing: .18em; color: var(--dim); }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+            box-shadow: 0 0 10px var(--green); animation: breathe 2.4s ease-in-out infinite; }
+  .live.down i { background: var(--red); box-shadow: 0 0 10px var(--red); animation: none; }
+  .live.sim i { background: var(--blue); box-shadow: 0 0 10px var(--blue); }
+  @keyframes breathe { 50% { opacity: .35; } }
+
+  /* ── stats ──────────────────────────────────────────── */
+  #stats { position: absolute; left: 56px; right: 56px; top: 92px;
+           display: grid; grid-template-columns: repeat(6, 1fr); gap: 24px; }
+  .stat .k { font: 600 10px/1 var(--sans); letter-spacing: .2em; color: var(--dim); }
+  .stat .v { margin-top: 8px; font: 300 40px/1 var(--sans); font-variant-numeric: tabular-nums;
+             letter-spacing: -.02em; transition: color .4s; }
+  .stat .v small { font-size: 18px; color: var(--dim); margin-left: 3px; letter-spacing: 0; }
+  .stat .v.green { color: var(--green); }
+  .stat .v.blue { color: var(--blue); }
+  .stat .v.red { color: var(--red); }
+
+  /* ── bands ──────────────────────────────────────────── */
+  .band-label { position: absolute; left: 56px; font: 600 10px/1 var(--sans);
+                letter-spacing: .2em; color: var(--dim); }
+  .band-label b { color: var(--white); font-weight: 600; margin-left: 8px; letter-spacing: .05em; }
+  #lblPool { top: 196px; }
+  #lblStore { top: 498px; }
+  .rule { position: absolute; left: 56px; right: 56px; height: 1px; background: var(--faint); }
+  #ruleStore { top: 516px; }
+
+  .bay {
+    position: absolute; top: 220px; height: 196px;
+    border: 1.5px solid var(--faint); border-radius: 14px;
+    transition: left .7s var(--ease), width .7s var(--ease), border-color .5s, opacity .6s, box-shadow .5s;
+    opacity: 0;
+  }
+  .bay.in { opacity: 1; }
+  .bay.busy { border-color: rgba(46, 229, 157, .75); box-shadow: 0 0 24px rgba(46, 229, 157, .12) inset; }
+  .bay.warm { border-style: dashed; }
+  .bay.pulse { animation: pulse .9s var(--ease); }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46, 229, 157, .55); } 100% { box-shadow: 0 0 0 18px rgba(46, 229, 157, 0); } }
+  .bay .name { position: absolute; left: 14px; top: 12px; font: 500 12px/1 var(--mono); }
+  .bay .meta { position: absolute; left: 14px; bottom: 12px; right: 14px; display: flex;
+               justify-content: space-between; font: 500 10px/1 var(--sans);
+               letter-spacing: .14em; color: var(--dim); }
+  .bay .meta .st { color: var(--blue); }
+  .bay.busy .meta .st { color: var(--green); }
+  .bay.warm .meta .st { color: var(--white); }
+  .bay .who { position: absolute; left: 14px; right: 14px; top: 34px; font: 500 12px/1.5 var(--sans);
+              color: var(--green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .dot {
+    position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%;
+    background: var(--blue); opacity: .75;
+    transition: transform 1s var(--ease), background .5s, opacity .5s, width .5s, height .5s, box-shadow .5s;
+  }
+  .dot.running { background: var(--green); opacity: 1; width: 16px; height: 16px;
+                 box-shadow: 0 0 14px rgba(46, 229, 157, .7); }
+  .dot.resuming, .dot.suspending { background: var(--white); opacity: 1; width: 14px; height: 14px;
+                                   box-shadow: 0 0 12px rgba(255, 255, 255, .6); }
+  .dot.waiting { background: var(--red); box-shadow: 0 0 12px rgba(255, 77, 94, .7); }
+  .dot.gone { opacity: 0; }
+
+  #legend { position: absolute; left: 56px; right: 56px; top: 640px; display: flex; gap: 22px;
+            font: 500 11px/1 var(--sans); color: var(--dim); letter-spacing: .04em; }
+  #legend b { color: var(--white); font-weight: 600; margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+  /* ── event ticker ───────────────────────────────────── */
+  #ticker { position: absolute; right: 56px; top: 498px; width: 420px; display: flex;
+            flex-direction: column-reverse; gap: 6px; pointer-events: none; }
+  /* Ticker sits over the store's right edge; the store wraps short of it. */
+  .ev { font: 500 12px/1.3 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden;
+        text-overflow: ellipsis; text-align: right; animation: evIn .5s var(--ease); }
+  .ev .a { color: var(--white); }
+  .ev.restore .tag { color: var(--green); }
+  .ev.suspend .tag, .ev.create .tag { color: var(--blue); }
+  .ev.error .tag, .ev.error .a { color: var(--red); }
+  .ev.info .tag { color: var(--white); }
+  @keyframes evIn { from { opacity: 0; transform: translateY(8px); } }
+
+  #error { position: absolute; left: 56px; right: 56px; top: 680px; font: 500 11px/1.3 var(--mono);
+           color: var(--red); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── app-window toolbar (never shown in OBS Browser Source) ───────── */
+  #bar { position: fixed; top: 10px; right: 12px; display: none; gap: 6px; opacity: 0;
+         transition: opacity .2s; z-index: 10; }
+  body.app #bar { display: flex; }
+  body.app:hover #bar { opacity: 1; }
+  body.clickthru #bar { display: none; }
+  #bar button { font: 600 10px/1 var(--sans); letter-spacing: .12em; color: var(--white);
+                background: rgba(20, 26, 36, .85); border: 1px solid rgba(255, 255, 255, .14);
+                border-radius: 7px; padding: 7px 9px; cursor: pointer; }
+  #bar button.on { border-color: var(--green); color: var(--green); }
+  #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+           font: 500 12px/1 var(--sans); background: rgba(20, 26, 36, .92); color: var(--white);
+           padding: 9px 14px; border-radius: 8px; opacity: 0; transition: opacity .25s;
+           pointer-events: none; z-index: 11; }
+  #toast.show { opacity: 1; }
+  #drag { position: fixed; left: 0; right: 0; top: 0; height: 40px; z-index: 5; }
+</style>
+</head>
+<body>
+<div id="drag" data-tauri-drag-region></div>
+<div id="bar">
+  <button id="bBack" title="Dark panel behind the HUD (B)">PANEL</button>
+  <button id="bTop" title="Keep on top (P)">ON TOP</button>
+  <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
+  <button id="bSim" title="Simulated traffic (S)">SIM</button>
+  <button id="bObs" title="Copy the OBS Browser Source URL">OBS URL</button>
+</div>
+<div id="toast"></div>
+
+<div id="stage" class="stage">
+  <div id="backdrop"></div>
+  <header>
+    <span class="brand">AGENT SUBSTRATE</span>
+    <span class="ctx" id="ctx">connecting…</span>
+    <span class="live" id="live"><i></i><span id="liveTxt">LIVE</span></span>
+  </header>
+
+  <section id="stats">
+    <div class="stat"><div class="k">WORKERS</div><div class="v" id="sWorkers">–</div></div>
+    <div class="stat"><div class="k">AGENTS</div><div class="v" id="sAgents">–</div></div>
+    <div class="stat"><div class="k">RUNNING</div><div class="v green" id="sRunning">–</div></div>
+    <div class="stat"><div class="k">DENSITY</div><div class="v" id="sDensity">–</div></div>
+    <div class="stat"><div class="k">RESTORE P50</div><div class="v" id="sRestore">–</div></div>
+    <div class="stat"><div class="k">RESTORES</div><div class="v blue" id="sResumes">–</div></div>
+  </section>
+
+  <div class="band-label" id="lblPool">WORKER POOL<b id="poolName"></b></div>
+  <div id="bays"></div>
+  <div class="band-label" id="lblStore">SNAPSHOT STORE<b id="storeCount"></b></div>
+  <div class="rule" id="ruleStore"></div>
+  <div id="dots"></div>
+  <div id="legend"></div>
+  <div id="ticker"></div>
+  <div id="error"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const TAURI = window.__TAURI__;
+const params = new URLSearchParams(location.search);
+const W = 1280, H = 720, PAD = 56;
+
+// ── fit the 1280×720 stage to any window / OBS source size ─────────────
+function fit() {
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  $('stage').style.transform = `scale(${s}) translate(-50%, -50%)`;
+}
+addEventListener('resize', fit); fit();
+
+// ── prefs (app window only; OBS gets query params) ─────────────────────
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('hud.' + k); return v == null ? d : v === '1'; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('hud.' + k, v ? '1' : '0'); } catch {} },
+};
+if (TAURI) document.body.classList.add('app');
+let backdrop = params.has('panel') ? params.get('panel') !== '0' : (TAURI ? store.get('panel', true) : false);
+let sim = params.get('sim') === '1';
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+// ── rendering ──────────────────────────────────────────────────────────
+const bayEls = new Map(), dotEls = new Map(), seenEvents = new Set();
+let last = null;
+
+function fmtMs(ms) {
+  if (ms == null) return '–';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}<small>s</small>` : `${ms}<small>ms</small>`;
+}
+function short(pod) { return pod.replace(/^.*-([a-z0-9]{5})$/, '$1'); }
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
+}
+
+function layoutBays(workers) {
+  const n = Math.max(workers.length, 1), gap = 20, avail = W - PAD * 2;
+  const w = Math.min(260, (avail - gap * (n - 1)) / n);
+  const total = w * n + gap * (n - 1);
+  const x0 = PAD + (avail - total) / 2;
+  const pos = new Map();
+  workers.forEach((wk, i) => pos.set(wk.name, { x: x0 + i * (w + gap), w }));
+  return pos;
+}
+
+function render(s) {
+  last = s;
+  const now = s.now || Date.now();
+  // header
+  const pool = s.pools[0];
+  $('ctx').textContent = `${s.context}${pool ? ' · ' + pool.namespace + '/' + pool.name : ''}`;
+  const live = $('live');
+  live.classList.toggle('down', !s.connected && !sim);
+  live.classList.toggle('sim', sim);
+  $('liveTxt').textContent = sim ? 'SIMULATED' : !s.connected ? 'OFFLINE' : s.log_stream ? 'LIVE' : 'POLLING';
+  $('error').textContent = sim ? '' : (s.error || '');
+
+  // stats
+  const workers = s.workers;
+  const ready = workers.filter(w => w.ready).length;
+  const desired = s.pools.reduce((a, p) => a + p.desired, 0) || workers.length;
+  const running = s.actors.filter(a => a.state === 'running').length;
+  const moving = s.actors.filter(a => a.state === 'resuming' || a.state === 'suspending').length;
+  $('sWorkers').innerHTML = `${ready}<small>/ ${desired}</small>`;
+  $('sWorkers').className = 'v' + (ready < desired ? ' red' : '');
+  $('sAgents').textContent = s.actors.length;
+  $('sRunning').innerHTML = `${running}${moving ? `<small>+${moving}</small>` : ''}`;
+  $('sDensity').innerHTML = ready ? `${Math.round(s.actors.length / ready)}<small>: 1</small>` : '–';
+  $('sRestore').innerHTML = fmtMs(s.stats.p50_restore_ms);
+  $('sResumes').innerHTML = `${s.stats.resumes}${s.stats.errors ? `<small style="color:var(--red)">${s.stats.errors} err</small>` : ''}`;
+  $('poolName').textContent = pool ? `${pool.name}  ·  gVisor` : '';
+
+  // bays
+  const pos = layoutBays(workers);
+  const hosted = new Map();
+  for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) {
+    if (!hosted.has(a.worker)) hosted.set(a.worker, []);
+    hosted.get(a.worker).push(a);
+  }
+  const alive = new Set();
+  for (const wk of workers) {
+    alive.add(wk.name);
+    let el = bayEls.get(wk.name);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'bay';
+      el.innerHTML = '<div class="name"></div><div class="who"></div><div class="meta"><span class="st"></span><span class="ses"></span></div>';
+      $('bays').appendChild(el);
+      bayEls.set(wk.name, el);
+      el._sessions = wk.sessions;
+      requestAnimationFrame(() => el.classList.add('in'));
+    }
+    const p = pos.get(wk.name);
+    el.style.left = p.x + 'px'; el.style.width = p.w + 'px';
+    const here = hosted.get(wk.name) || [];
+    el.classList.toggle('busy', here.some(a => a.state === 'running'));
+    el.classList.toggle('warm', !wk.ready);
+    el.querySelector('.name').textContent = short(wk.name);
+    el.querySelector('.who').textContent = here.map(a => `${a.agent || 'agent'} · ${ago(now - a.since)}`).join('   ');
+    el.querySelector('.st').textContent = !wk.ready ? (wk.phase === 'Terminating' ? 'DRAINING' : 'WARMING') : here.length ? 'RUNNING' : 'IDLE';
+    el.querySelector('.ses').textContent = wk.sessions ? `${wk.sessions} SESSION${wk.sessions > 1 ? 'S' : ''}` : '';
+    if (wk.sessions > el._sessions) {
+      el.classList.remove('pulse'); void el.offsetWidth; el.classList.add('pulse');
+    }
+    el._sessions = wk.sessions;
+  }
+  for (const [name, el] of bayEls) if (!alive.has(name)) {
+    el.classList.remove('in'); bayEls.delete(name); setTimeout(() => el.remove(), 700);
+  }
+
+  // dots: storage grid for suspended, bay slots for hosted, queue for orphans
+  const STORE_Y = 534, STEP = 20, storeW = W - PAD * 2 - 440;
+  const perRow = Math.floor(storeW / STEP);
+  const suspended = s.actors.filter(a => a.state === 'suspended' || (a.state === 'suspending' && !a.worker));
+  const slot = new Map();
+  suspended.forEach((a, i) => slot.set(a.name, { x: PAD + (i % perRow) * STEP, y: STORE_Y + Math.floor(i / perRow) * STEP }));
+  for (const [worker, list] of hosted) {
+    const p = pos.get(worker); if (!p) continue;
+    list.forEach((a, i) => slot.set(a.name, { x: p.x + 16 + (i % 8) * 26, y: 220 + 92 + Math.floor(i / 8) * 26 }));
+  }
+  let q = 0;
+  for (const a of s.actors) if (!slot.has(a.name)) {
+    // resuming/suspending with an unknown or departed worker: hold mid-air
+    const p = a.worker && pos.get(a.worker);
+    slot.set(a.name, p ? { x: p.x + p.w / 2 - 7, y: 440 } : { x: W / 2 - 60 + (q++) * 22, y: 452 });
+  }
+  const live2 = new Set();
+  for (const a of s.actors) {
+    live2.add(a.name);
+    let d = dotEls.get(a.name);
+    const p = slot.get(a.name);
+    if (!d) {
+      d = document.createElement('div');
+      d.className = 'dot gone';
+      d.style.transform = `translate(${p.x}px, ${p.y + 30}px)`;
+      $('dots').appendChild(d); dotEls.set(a.name, d);
+      void d.offsetWidth;
+    }
+    const waiting = a.state === 'resuming' && !a.worker && now - a.since > 4000;
+    d.className = `dot ${a.state}${waiting ? ' waiting' : ''}`;
+    d.title = `${a.agent} · ${a.name}`;
+    d.style.transform = `translate(${p.x}px, ${p.y}px)`;
+  }
+  for (const [name, d] of dotEls) if (!live2.has(name)) {
+    d.classList.add('gone'); dotEls.delete(name); setTimeout(() => d.remove(), 600);
+  }
+  $('storeCount').textContent = `${s.actors.filter(a => a.state === 'suspended').length} checkpointed`;
+
+  // legend: agents per template
+  const by = new Map();
+  for (const a of s.actors) by.set(a.agent || 'agent', (by.get(a.agent || 'agent') || 0) + 1);
+  $('legend').innerHTML = [...by].sort((a, b) => b[1] - a[1]).slice(0, 8)
+    .map(([k, v]) => `<span><b>${v}</b>${esc(k)}</span>`).join('');
+
+  // ticker: newest first, last 7
+  const tk = $('ticker');
+  const evs = s.events.slice(-7);
+  const want = new Set(evs.map(e => e.id));
+  for (const el of [...tk.children]) if (!want.has(+el.dataset.id)) el.remove();
+  for (const e of evs) {
+    if (tk.querySelector(`[data-id="${e.id}"]`)) continue;
+    const el = document.createElement('div');
+    el.className = `ev ${e.kind}`; el.dataset.id = e.id;
+    const t = new Date(e.ts).toLocaleTimeString([], { hour12: false });
+    const tag = { restore: '▲', suspend: '▼', create: '＋', error: '✕', info: '•' }[e.kind] || '•';
+    el.innerHTML = `${t}  <span class="tag">${tag}</span> <span class="a">${esc(e.agent)}</span> ${esc(e.text)}`;
+    tk.appendChild(el);
+  }
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]); }
+
+// ── data: Tauri events in the app, SSE in a browser / OBS source ───────
+function onSnap(json) { if (!sim) { try { render(JSON.parse(json)); } catch (e) { console.warn(e); } } }
+if (TAURI) {
+  TAURI.event.listen('snapshot', ev => onSnap(ev.payload));
+  TAURI.core.invoke('get_state').then(onSnap);
+} else if (location.protocol.startsWith('http')) {
+  const connect = () => {
+    const es = new EventSource('/events');
+    es.onmessage = ev => onSnap(ev.data);
+    es.onerror = () => { es.close(); setTimeout(connect, 2000); };
+  };
+  connect();
+} else {
+  sim = true; // opened as a file: nothing to talk to
+}
+
+// ── simulated substrate (S): for talks or a quiet cluster ──────────────
+const simState = (() => {
+  const agents = ['fortigate', 'k8s-assistant', 'sre-triage', 'billing-bot', 'docs-helper'];
+  const workers = [0, 1, 2].map(i => ({ name: `kagent-default-sim${i}x${i}`, uid: 'u' + i, pool: 'kagent-default', phase: 'Running', ready: true, sessions: 0 }));
+  const actors = Array.from({ length: 54 }, (_, i) => ({
+    name: `ai-sim-${i}`, uid: 's' + i, agent: agents[i % 7 % agents.length], state: 'suspended', worker: null, since: Date.now(),
+  }));
+  const s = {
+    context: 'simulated', connected: true, error: null, log_stream: true, now: Date.now(),
+    pools: [{ namespace: 'kagent', name: 'kagent-default', desired: 3, ready: 3 }], workers, actors,
+    stats: { resumes: 0, suspends: 0, creates: 0, errors: 0, p50_restore_ms: null, events_per_min: 0 },
+    events: [], _id: 0, _lat: [],
+  };
+  const ev = (kind, agent, text) => { s.events.push({ id: ++s._id, ts: Date.now(), kind, agent, text }); s.events = s.events.slice(-40); };
+  return { s, ev };
+})();
+function simTick() {
+  if (!sim) return;
+  const { s, ev } = simState, now = Date.now();
+  s.now = now;
+  for (const a of s.actors) {
+    if (a.state === 'resuming' && now - a.since > 260) {
+      const ms = now - a.since; a.state = 'running'; a.since = now; s.stats.resumes++;
+      s._lat.push(ms); s._lat = s._lat.slice(-30);
+      s.stats.p50_restore_ms = [...s._lat].sort((x, y) => x - y)[s._lat.length >> 1];
+      s.workers.find(w => w.name === a.worker).sessions++;
+      ev('restore', a.agent, `restored → ${a.worker} · ${ms} ms`);
+    } else if (a.state === 'running' && now - a.since > 3500 + Math.random() * 6000) {
+      a.state = 'suspending'; a.since = now;
+    } else if (a.state === 'suspending' && now - a.since > 140) {
+      a.state = 'suspended'; a.worker = null; a.since = now; s.stats.suspends++;
+      ev('suspend', a.agent, `checkpointed to storage · ${110 + (Math.random() * 60 | 0)} ms`);
+    }
+  }
+  const busy = new Set(s.actors.filter(a => a.worker).map(a => a.worker));
+  const free = s.workers.filter(w => !busy.has(w.name));
+  if (free.length && Math.random() < 0.5) {
+    const idle = s.actors.filter(a => a.state === 'suspended');
+    const a = idle[Math.random() * idle.length | 0];
+    a.state = 'resuming'; a.worker = free[Math.random() * free.length | 0].name; a.since = now;
+  }
+  render(s);
+}
+setInterval(simTick, 300);
+
+// ── app window controls ────────────────────────────────────────────────
+const win = TAURI && TAURI.window && TAURI.window.getCurrentWindow ? TAURI.window.getCurrentWindow() : null;
+let onTop = TAURI ? store.get('top', false) : false, clickThru = false;
+function apply() {
+  document.body.classList.toggle('backdrop', backdrop);
+  document.body.classList.toggle('clickthru', clickThru);
+  $('bBack').classList.toggle('on', backdrop);
+  $('bTop').classList.toggle('on', onTop);
+  $('bClick').classList.toggle('on', clickThru);
+  $('bSim').classList.toggle('on', sim);
+  if (win) {
+    win.setAlwaysOnTop(onTop).catch(() => {});
+    win.setIgnoreCursorEvents(clickThru).catch(() => {});
+  }
+}
+function toggle(what) {
+  if (what === 'panel') { backdrop = !backdrop; store.set('panel', backdrop); }
+  if (what === 'top') { onTop = !onTop; store.set('top', onTop); }
+  if (what === 'click') {
+    clickThru = !clickThru;
+    if (clickThru && !onTop) { onTop = true; }
+    toast(clickThru ? 'Click-through on · Esc to get clicks back' : 'Click-through off');
+  }
+  if (what === 'sim') { sim = !sim; toast(sim ? 'Simulated traffic' : 'Live cluster'); if (!sim && last) render(last); }
+  apply();
+}
+$('bBack').onclick = () => toggle('panel');
+$('bTop').onclick = () => toggle('top');
+$('bClick').onclick = () => toggle('click');
+$('bSim').onclick = () => toggle('sim');
+$('bObs').onclick = async () => {
+  const url = TAURI ? await TAURI.core.invoke('obs_url') : location.origin + '/';
+  try { await navigator.clipboard.writeText(url); toast(`Copied ${url} — add as OBS Browser Source`); }
+  catch { toast(`OBS Browser Source: ${url}`); }
+};
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'b') toggle('panel');
+  else if (k === 'p') toggle('top');
+  else if (k === 'i') toggle('click');
+  else if (k === 's') toggle('sim');
+  else if (k === 'escape' && clickThru) toggle('click');
+});
+apply();
+</script>
+</body>
+</html>

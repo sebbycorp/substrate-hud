@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Substrate HUD",
+  "version": "0.1.0",
+  "identifier": "io.solo.substratehud",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Substrate HUD",
+        "width": 1280,
+        "height": 720,
+        "minWidth": 480,
+        "minHeight": 270,
+        "resizable": true,
+        "transparent": true,
+        "shadow": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": ["icons/icon.icns"]
+  }
+}

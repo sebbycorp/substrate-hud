@@ -1,0 +1,5 @@
+.DS_Store
+app/src-tauri/target/
+app/src-tauri/gen/
+*.app
+app/src-tauri/icon-src.png
