@@ -20,6 +20,8 @@ pub struct Pool {
     pub name: String,
     pub desired: i64,
     pub ready: i64,
+    /// spec.template.priorityClassName; empty = default priority.
+    pub priority_class: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -196,8 +198,11 @@ impl Hub {
     }
 }
 
+/// Harness names seen on the cluster, refreshed by the pool poller.
+pub static HARNESSES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// "fortigate-default-a0f8b09338b1" → "fortigate". Template names are
-/// `<agenttemplate>-<harness>-<hash>`; the harness on this cluster is "default".
+/// `<agenttemplate>-<harness>-<hash>`.
 pub fn agent_label(template: &str) -> String {
     let mut s = template;
     if let Some((head, tail)) = s.rsplit_once('-') {
@@ -205,5 +210,14 @@ pub fn agent_label(template: &str) -> String {
             s = head;
         }
     }
-    s.strip_suffix("-default").unwrap_or(s).to_string()
+    let harnesses = HARNESSES.lock().unwrap();
+    let known = harnesses.iter().map(String::as_str).chain(["default"]);
+    for h in known {
+        if let Some(base) = s.strip_suffix(h).and_then(|b| b.strip_suffix('-')) {
+            if !base.is_empty() {
+                return base.to_string();
+            }
+        }
+    }
+    s.to_string()
 }

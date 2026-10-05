@@ -84,6 +84,11 @@
     opacity: 0;
   }
   .bay.short .who { display: none; }
+  .bay.high { border-color: rgba(255, 255, 255, .85); }
+  .ptag { position: absolute; font: 700 7.5px/1 var(--mono); color: var(--dim); white-space: nowrap; }
+  .ptag b { font: 800 7.5px/1 var(--sans); letter-spacing: .18em; margin-left: 7px; color: var(--blue); }
+  .ptag.high b { color: var(--white); }
+  .ptag span { margin-left: 7px; color: var(--dim); }
   .bay.in { opacity: 1; }
   .bay.busy { border-color: rgba(46, 229, 157, .75); box-shadow: 0 0 16px rgba(46, 229, 157, .12) inset; }
   .bay.warm { border-style: dashed; }
@@ -198,6 +203,7 @@
   </section>
 
   <div class="band-label" id="lblPool">WORKER POOL<b id="poolName"></b></div>
+  <div id="pooltags"></div>
   <div id="bays"></div>
   <div class="band-label" id="lblStore">SNAPSHOT STORE<b id="storeCount"></b></div>
   <div class="rule" id="ruleStore"></div>
@@ -263,20 +269,44 @@ function ago(ms) {
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
 }
 
-function layoutBays(workers) {
-  const n = Math.max(workers.length, 1), pos = new Map();
+// Workers grouped by pool, high-priority pools (those with a PriorityClass) first.
+function groupWorkers(workers, pools) {
+  const order = [...pools].sort((a, b) => (b.priority_class ? 1 : 0) - (a.priority_class ? 1 : 0) || a.name.localeCompare(b.name));
+  const groups = order.map(pool => ({ pool, workers: workers.filter(w => w.pool === pool.name) }));
+  const known = new Set(pools.map(p => p.name));
+  const strays = workers.filter(w => !known.has(w.pool));
+  if (strays.length) groups.push({ pool: { name: strays[0].pool || 'workers', priority_class: '' }, workers: strays });
+  return groups.filter(g => g.workers.length || g.pool.desired);
+}
+
+// Returns bay rectangles keyed by worker name, plus one header per pool.
+function layoutBays(workers, pools) {
+  const groups = groupWorkers(workers, pools);
+  const tiered = groups.length > 1 || groups.some(g => g.pool.priority_class);
+  const n = Math.max(workers.length, 1), G = Math.max(groups.length, 1), pos = new Map(), tags = [];
+  const tag = (g, x, y) => tiered && tags.push({ key: g.pool.name, x, y, pool: g.pool, high: !!g.pool.priority_class });
   if (layout === 'portrait') {
     // stacked full-width bays between the pool label and the store
-    const gap = 8, h = Math.min(58, (202 - gap * (n - 1)) / n);
-    workers.forEach((wk, i) => pos.set(wk.name, { x: PAD, y: 186 + i * (h + gap), w: W - PAD * 2, h }));
-    return pos;
+    const gap = 6, TAG = tiered ? 14 : 0, GROUP = 6;
+    const h = Math.min(58, (204 - G * TAG - (n - G) * gap - (G - 1) * GROUP) / n);
+    let y = 186;
+    for (const g of groups) {
+      tag(g, PAD, y); y += TAG;
+      for (const wk of g.workers) { pos.set(wk.name, { x: PAD, y, w: W - PAD * 2, h }); y += h + gap; }
+      y += GROUP - gap;
+    }
+    return { pos, tags };
   }
-  const gap = 10, avail = W - PAD * 2;
-  const w = Math.min(200, (avail - gap * (n - 1)) / n);
-  const total = w * n + gap * (n - 1);
-  const x0 = PAD + (avail - total) / 2;
-  workers.forEach((wk, i) => pos.set(wk.name, { x: x0 + i * (w + gap), y: 98, w, h: 72 }));
-  return pos;
+  const gap = 10, GROUP = 22, avail = W - PAD * 2;
+  const w = Math.min(200, (avail - (n - G) * gap - (G - 1) * GROUP) / n);
+  const total = w * n + (n - G) * gap + (G - 1) * GROUP;
+  let x = PAD + (avail - total) / 2;
+  for (const g of groups) {
+    tag(g, x, 85);
+    for (const wk of g.workers) { pos.set(wk.name, { x, y: 98, w, h: 72 }); x += w + gap; }
+    x += GROUP - gap;
+  }
+  return { pos, tags };
 }
 
 function render(s) {
@@ -284,7 +314,8 @@ function render(s) {
   const now = s.now || Date.now();
   // header
   const pool = s.pools[0];
-  $('ctx').textContent = `${s.context}${pool ? ' · ' + pool.namespace + '/' + pool.name : ''}`;
+  const nss = [...new Set(s.pools.map(p => p.namespace))].join(', ');
+  $('ctx').textContent = `${s.context}${s.pools.length === 1 ? ' · ' + pool.namespace + '/' + pool.name : nss ? ' · ' + nss : ''}`;
   const live = $('live');
   live.classList.toggle('down', !s.connected && !sim);
   live.classList.toggle('sim', sim);
@@ -304,10 +335,15 @@ function render(s) {
   $('sDensity').innerHTML = ready ? `${Math.round(s.actors.length / ready)}<small>: 1</small>` : '–';
   $('sRestore').innerHTML = fmtMs(s.stats.p50_restore_ms);
   $('sResumes').innerHTML = `${s.stats.resumes}${s.stats.errors ? `<small style="color:var(--red)">${s.stats.errors} err</small>` : ''}`;
-  $('poolName').textContent = pool ? `${pool.name}  ·  gVisor` : '';
+  $('poolName').textContent = s.pools.length > 1 ? `${s.pools.length} pools  ·  gVisor` : pool ? `${pool.name}  ·  gVisor` : '';
 
   // bays
-  const pos = layoutBays(workers);
+  const { pos, tags } = layoutBays(workers, s.pools);
+  $('lblPool').style.visibility = layout === 'wide' && tags.length ? 'hidden' : '';
+  $('pooltags').innerHTML = tags.map(t =>
+    `<div class="ptag${t.high ? ' high' : ''}" style="left:${t.x}px;top:${t.y}px">${esc(t.pool.name)}` +
+    `<b>${t.high ? 'HIGH PRIORITY' : 'LOW PRIORITY'}</b><span>${t.pool.ready ?? 0}/${t.pool.desired ?? 0}</span></div>`).join('');
+  const highPools = new Set(tags.filter(t => t.high).map(t => t.key));
   const hosted = new Map();
   for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) {
     if (!hosted.has(a.worker)) hosted.set(a.worker, []);
@@ -330,6 +366,7 @@ function render(s) {
     el.style.left = p.x + 'px'; el.style.width = p.w + 'px';
     el.style.top = p.y + 'px'; el.style.height = p.h + 'px';
     el.classList.toggle('short', p.h < 50);
+    el.classList.toggle('high', highPools.has(wk.pool));
     const here = hosted.get(wk.name) || [];
     el.classList.toggle('busy', here.some(a => a.state === 'running'));
     el.classList.toggle('warm', !wk.ready);
@@ -434,13 +471,18 @@ if (TAURI) {
 // ── simulated substrate (S): for talks or a quiet cluster ──────────────
 const simState = (() => {
   const agents = ['fortigate', 'k8s-assistant', 'sre-triage', 'billing-bot', 'docs-helper'];
-  const workers = [0, 1, 2].map(i => ({ name: `kagent-default-5c8d7f9b4-sim${i}q`, uid: 'u' + i, pool: 'kagent-default', phase: 'Running', ready: true, sessions: 0 }));
+  // one reserved high-tier worker, two shared low-tier workers
+  const workers = [['kagent-high', 'kagent-high-7d9f6c5b8-hi0aq'], ['kagent-default', 'kagent-default-5c8d7f9b4-sim1q'],
+                   ['kagent-default', 'kagent-default-5c8d7f9b4-sim2q']]
+    .map(([pool, name], i) => ({ name, uid: 'u' + i, pool, phase: 'Running', ready: true, sessions: 0 }));
   const actors = Array.from({ length: 54 }, (_, i) => ({
-    name: `ai-sim-${i}`, uid: 's' + i, agent: agents[i % 7 % agents.length], state: 'suspended', worker: null, since: Date.now(),
+    name: `ai-sim-${i}`, uid: 's' + i, agent: i < 6 ? 'k8s-assistant-priority' : agents[i % 7 % agents.length],
+    state: 'suspended', worker: null, since: Date.now(),
   }));
   const s = {
     context: 'simulated', connected: true, error: null, log_stream: true, now: Date.now(),
-    pools: [{ namespace: 'kagent', name: 'kagent-default', desired: 3, ready: 3 }], workers, actors,
+    pools: [{ namespace: 'kagent', name: 'kagent-high', desired: 1, ready: 1, priority_class: 'substrate-high' },
+            { namespace: 'kagent', name: 'kagent-default', desired: 2, ready: 2, priority_class: '' }], workers, actors,
     stats: { resumes: 0, suspends: 0, creates: 0, errors: 0, p50_restore_ms: null, events_per_min: 0 },
     events: [], _id: 0, _lat: [],
   };
@@ -466,11 +508,13 @@ function simTick() {
     }
   }
   const busy = new Set(s.actors.filter(a => a.worker).map(a => a.worker));
-  const free = s.workers.filter(w => !busy.has(w.name));
-  if (free.length && Math.random() < 0.5) {
-    const idle = s.actors.filter(a => a.state === 'suspended');
+  // each tier only schedules onto its own pool
+  for (const high of [true, false]) {
+    const free = s.workers.filter(w => !busy.has(w.name) && (w.pool === 'kagent-high') === high);
+    if (!free.length || Math.random() > (high ? 0.25 : 0.5)) continue;
+    const idle = s.actors.filter(a => a.state === 'suspended' && (a.agent === 'k8s-assistant-priority') === high);
     const a = idle[Math.random() * idle.length | 0];
-    a.state = 'resuming'; a.worker = free[Math.random() * free.length | 0].name; a.since = now;
+    if (a) { a.state = 'resuming'; a.worker = free[Math.random() * free.length | 0].name; a.since = now; }
   }
   render(s);
 }

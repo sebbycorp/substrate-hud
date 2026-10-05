@@ -7,7 +7,7 @@
 //! - ate-api-server logs: streamed; every resume/suspend as it happens, with the
 //!   worker the scheduler picked (joined on trace_id)
 
-use crate::model::{agent_label, now_ms, Actor, Hub, Pool, Worker};
+use crate::model::{agent_label, now_ms, Actor, Hub, Pool, Worker, HARNESSES};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
@@ -139,6 +139,19 @@ pub fn poll_workers(cfg: Config, hub: Arc<Hub>) {
     loop {
         let pools = run(&cfg, &["get", "workerpools.ate.dev", "-A", "-o", "json", "--request-timeout=8s"]);
         let pods = run(&cfg, &["get", "pods", "-A", "-l", "ate.dev/worker-pool", "-o", "json", "--request-timeout=8s"]);
+        // Harness names let agent_label strip `-<harness>` from template names.
+        if let Ok(h) = run(&cfg, &["get", "harnesses.kagent.dev", "-A", "-o", "json", "--request-timeout=8s"]) {
+            let v: Value = serde_json::from_str(&h).unwrap_or(Value::Null);
+            let mut names: Vec<String> = v["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|i| i["metadata"]["name"].as_str().map(String::from))
+                .collect();
+            // Longest first so `-high` doesn't shadow e.g. `-very-high`.
+            names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+            *HARNESSES.lock().unwrap() = names;
+        }
         match (pools, pods) {
             (Ok(pools), Ok(pods)) => {
                 let pools = parse_pools(&pools);
@@ -177,6 +190,7 @@ fn parse_pools(json: &str) -> Vec<Pool> {
                     name: p["metadata"]["name"].as_str().unwrap_or("").into(),
                     desired: p["spec"]["replicas"].as_i64().unwrap_or(0),
                     ready: p["status"]["readyReplicas"].as_i64().unwrap_or(0),
+                    priority_class: p["spec"]["template"]["priorityClassName"].as_str().unwrap_or("").into(),
                 })
                 .collect()
         })
