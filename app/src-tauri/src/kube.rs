@@ -30,6 +30,10 @@ pub struct Config {
     pub postgres_container: String,
     pub database: String,
     pub port: u16,
+    /// Where the traffic button sends chats: the diary's agent-desk router.
+    pub traffic_namespace: String,
+    pub traffic_service: String,
+    pub traffic_port: u16,
 }
 
 impl Default for Config {
@@ -42,6 +46,9 @@ impl Default for Config {
             postgres_container: "postgres".into(),
             database: "atepg".into(),
             port: 7788,
+            traffic_namespace: "remarkable-diary".into(),
+            traffic_service: "agent-desk".into(),
+            traffic_port: 8080,
         }
     }
 }
@@ -96,7 +103,7 @@ fn kubectl_bin() -> String {
     .clone()
 }
 
-fn kubectl(cfg: &Config) -> Command {
+pub fn kubectl(cfg: &Config) -> Command {
     let mut c = Command::new(kubectl_bin());
     c.env("PATH", search_path());
     if !cfg.context.is_empty() {

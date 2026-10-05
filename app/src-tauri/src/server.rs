@@ -5,6 +5,7 @@
 //!   GET /         the same UI the app window shows
 //!   GET /events   Server-Sent Events, one JSON snapshot per change
 //!   GET /state    the current snapshot
+//!   GET /traffic  send one wave of real chats to the agents
 
 use crate::model::Hub;
 use std::io::{BufRead, BufReader, Write};
@@ -58,6 +59,14 @@ fn handle(mut stream: TcpStream, hub: Arc<Hub>) -> std::io::Result<()> {
     match path {
         "/" | "/index.html" => respond(&mut stream, "text/html; charset=utf-8", INDEX.as_bytes()),
         "/state" => respond(&mut stream, "application/json", hub.snapshot().as_bytes()),
+        // one wave of real chats (e.g. from a Stream Deck "website" button)
+        "/traffic" => {
+            let body = match crate::traffic::wave() {
+                Ok(n) => format!("{{\"sent\":{n}}}"),
+                Err(e) => serde_json::json!({ "error": e }).to_string(),
+            };
+            respond(&mut stream, "application/json", body.as_bytes())
+        }
         "/events" => {
             write!(
                 stream,

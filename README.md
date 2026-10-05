@@ -59,6 +59,23 @@ Query params: `?theme=rings` (workers as circles), `?theme=wb` (whiteboard; add 
 `?theme=glass` (the clean glass look),
 `?sim=1` forces simulated traffic.
 
+## Extras
+
+- **Traffic wave:** **T** in the app, *Send traffic wave* in the menu bar, or
+  `GET http://127.0.0.1:7788/traffic` (a Stream Deck "website" button) sends one
+  real chat each to `@k8s`, `@k8sp`, `@code` and `@forti` through the diary's
+  agent-desk (`remarkable-diary/agent-desk`, port-forwarded on demand). In SIM mode it
+  fires a simulated burst instead.
+- **Callouts for OBS:** a second Browser Source at
+  `http://127.0.0.1:7788/?view=callouts` (e.g. 1920×400, bottom of the scene) shows
+  big pop-ups such as *FORTIGATE RESTORED · onto 54pnd · 233 ms*, fading after 4 s.
+- **Sound:** arcade laser / explosion / beam-in for the invaders look, synthesised in
+  the page. Off by default: **N** in the app, or `?sound=1` on the OBS source (tick
+  *Control audio via OBS*).
+- **Menu bar app:** the HUD lives in the menu bar and turns on *Launch at login* on
+  first run (toggle it in the menu). Closing the window only hides it, so the OBS
+  sources keep working; *Quit Substrate HUD* in the menu really quits.
+
 ## App window
 
 Hover the top-right for controls, or use keys:
@@ -66,6 +83,8 @@ Hover the top-right for controls, or use keys:
 | Key | |
 | --- | --- |
 | **W** | cycle the look: rings (default) → invaders → timeline → bars → whiteboard → glass |
+| **T** | send a traffic wave (real chats; a simulated burst in SIM mode) |
+| **N** | arcade sound on/off |
 | **L** | portrait rail ⇄ wide strip (resizes the window) |
 | **B** | board (whiteboard) / dark panel (glass) behind the HUD; off = transparent |
 | **P** | keep on top |

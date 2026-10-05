@@ -158,6 +158,22 @@
   body.portrait #error { left: 18px; right: 18px; top: auto; bottom: 14px; white-space: normal; }
   .ev .n { color: var(--red); font-weight: 800; margin-left: 4px; }
 
+  /* ── callouts view (?view=callouts): big lower-third pop-ups for OBS ── */
+  #callouts { display: none; }
+  body.callouts #stage, body.callouts #bar, body.callouts #drag { display: none; }
+  body.callouts #callouts { display: flex; position: fixed; inset: 0; flex-direction: column; justify-content: flex-end;
+                            align-items: flex-start; gap: 1.2vh; padding: 4vh 4vw; pointer-events: none; }
+  .co { font-family: -apple-system, "SF Pro Display", sans-serif; color: #fff;
+        text-shadow: 0 2px 6px rgba(0, 0, 0, .9), 0 0 3px rgba(0, 0, 0, .9), 0 0 18px rgba(0, 0, 0, .5);
+        animation: coIn .45s cubic-bezier(.2, .8, .2, 1) both; }
+  .co.out { animation: coOut .6s ease both; }
+  .co .t { font-weight: 900; font-size: min(9vh, 5.2vw); letter-spacing: .01em; line-height: 1.05; }
+  .co .t i { font-style: normal; margin-right: .3em; }
+  .co .s { font-weight: 800; font-size: min(6vh, 3.2vw); opacity: .95; margin-top: .15em; }
+  .co.restore .t i { color: #34f0a4; } .co.suspend .t i { color: #4aa3ff; } .co.error .t i, .co.error .s { color: #ff4f61; }
+  @keyframes coIn { from { opacity: 0; transform: translateY(30%); } }
+  @keyframes coOut { to { opacity: 0; transform: translateY(-20%); } }
+
   /* ── invaders: everything is drawn on one canvas ── */
   #arcade { position: absolute; left: 0; top: 0; display: none; }
   body.invaders #arcade { display: block; }
@@ -328,9 +344,12 @@
   <button id="bTop" title="Keep on top (P)">ON TOP</button>
   <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
   <button id="bSim" title="Simulated traffic (S)">SIM</button>
+  <button id="bTraffic" title="Send a wave of real chats to the agents (T)">TRAFFIC</button>
+  <button id="bSound" title="Arcade sound effects (N)">SOUND</button>
   <button id="bObs" title="Copy the OBS Browser Source URL">OBS URL</button>
 </div>
 <div id="toast"></div>
+<div id="callouts"></div>
 
 <div id="stage" class="stage">
   <div id="backdrop"></div>
@@ -534,6 +553,7 @@ function layoutBays(workers, pools) {
 
 function render(s) {
   last = s;
+  if (CALLOUTS) { callouts.feed(s); return; }
   if (vt() === 'invaders') { arcade.feed(s); return; }
   const now = s.now || Date.now();
   // header
@@ -768,6 +788,78 @@ function renderTimeline(lanes, sessions, now) {
   el.innerHTML = out.join('');
 }
 
+// ── arcade sound effects: synthesised with Web Audio, off unless enabled ──
+// OBS Browser Sources play audio (tick "Control audio via OBS" to mix it).
+const sfx = (() => {
+  let ac = null;
+  let on = params.has('sound') ? params.get('sound') !== '0' : (TAURI ? store.get('sound', false) : false);
+  const ctx = () => {
+    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === 'suspended') ac.resume();
+    return ac;
+  };
+  function tone(f0, f1, dur, type = 'square', vol = 0.05) {
+    const a = ctx(), o = a.createOscillator(), g = a.createGain(), t = a.currentTime;
+    o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function noise(dur, vol = 0.12) {
+    const a = ctx(), n = Math.floor(a.sampleRate * dur), buf = a.createBuffer(1, n, a.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = a.createBufferSource(), f = a.createBiquadFilter(), g = a.createGain(), t = a.currentTime;
+    src.buffer = buf; f.type = 'lowpass'; f.frequency.setValueAtTime(2400, t); f.frequency.exponentialRampToValueAtTime(140, t + dur);
+    g.gain.value = vol; src.connect(f).connect(g).connect(a.destination); src.start(t);
+  }
+  // at most one of each sound per 90 ms, so a burst of events doesn't pile up voices
+  const last = {};
+  const safe = (name, fn) => (...a) => {
+    const t = performance.now();
+    if (!on || t - (last[name] || 0) < 90) return;
+    last[name] = t;
+    try { fn(...a); } catch {}
+  };
+  return {
+    get on() { return on; },
+    toggle() { on = !on; if (TAURI) store.set('sound', on); if (on) safe('ui', () => tone(660, 990, 0.12, 'square', 0.04))(); return on; },
+    laser: safe('laser', () => tone(1500, 160, 0.17)),
+    boom: safe('boom', () => noise(0.38)),
+    beam: safe('beam', () => tone(200, 900, 0.32, 'triangle', 0.045)),
+  };
+})();
+
+// ── callouts view: big pop-ups for restores, checkpoints and errors ──────
+const callouts = (() => {
+  let lastId = null;
+  const el = () => $('callouts');
+  function card(e) {
+    const ms = (e.text.match(/(\d+)\s*ms/) || [])[1], pod = (e.text.match(/→ (\S+)/) || [])[1];
+    const agent = (e.agent || 'agent').toUpperCase();
+    const spec = {
+      restore: ['▲', `${agent} RESTORED`, [pod && `onto ${short(pod)}`, ms && `${ms} ms`].filter(Boolean).join(' · ')],
+      suspend: ['▼', `${agent} CHECKPOINTED`, ['to the snapshot store', ms && `${ms} ms`].filter(Boolean).join(' · ')],
+      error: ['✕', `${agent} ERROR`, e.text.replace(/^Failed to reconcile actor template, requeueing: /, '').slice(0, 90)],
+    }[e.kind];
+    if (!spec) return;
+    const d = document.createElement('div');
+    d.className = `co ${e.kind}`;
+    d.innerHTML = `<div class="t"><i>${spec[0]}</i>${esc(spec[1])}</div>${spec[2] ? `<div class="s">${esc(spec[2])}</div>` : ''}`;
+    el().appendChild(d);
+    while (el().children.length > 3) el().firstChild.remove();
+    setTimeout(() => d.classList.add('out'), 4200);
+    setTimeout(() => d.remove(), 4900);
+  }
+  return {
+    feed(s) {
+      const evs = s.events || [];
+      if (lastId == null) { lastId = evs.reduce((m, e) => Math.max(m, e.id), 0); return; }   // don't replay history
+      for (const e of evs) if (e.id > lastId) { lastId = e.id; card(e); }
+    },
+  };
+})();
+const CALLOUTS = params.get('view') === 'callouts';
+if (CALLOUTS) document.body.classList.add('callouts');
+
 // ── Space Invaders look ─────────────────────────────────────────────────
 // Each worker is a column with a hangar at the top; colour = the pool's priority
 // (red high, white coding, blue low). A running agent's invader leaves the
@@ -797,6 +889,7 @@ const arcade = (() => {
   const occ = new Map();      // worker -> { actor, agent, since, born }
   let doomed = [], shots = [], booms = [], ufos = [], popups = [], flashes = [], capsules = [];
   let storeDest = () => [W / 2, H - 190];
+  let primed = false;   // false until the first snapshot is in: no sounds for the initial state
   let lastErr = 0, cannonX = null, fired = 0, hits = 0;
   let clockOff = null, lastT = 0;   // server-minus-local clock offset (smoothed), last frame time
 
@@ -875,11 +968,13 @@ const arcade = (() => {
     const sess = s.sessions || [];
     for (const [w, a] of on) if (!occ.has(w)) {
       occ.set(w, { actor: a.name, agent: a.agent, since: a.since, born: performance.now() });
+      if (vt() === 'invaders' && primed) sfx.beam();
       const ss = [...sess].reverse().find(x => x.actor === a.name && x.end == null), c = where.get(w);
       if (c) popups.push({ x: c.cx, y: FALL_START - 4, text: ss?.restore_ms != null ? `+${ss.restore_ms}MS` : 'RESTORED', color: C.green, at: performance.now() });
     }
     for (const [w, o] of occ) { const a = on.get(w); if (a) o.since = a.since; }
     for (const e of s.events || []) if (e.kind === 'error' && e.id > lastErr) { lastErr = e.id; ufos.push({ at: performance.now(), text: e.agent }); }
+    primed = true;
     if (!raf) raf = requestAnimationFrame(frame);
   }
 
@@ -960,6 +1055,7 @@ const arcade = (() => {
       if (Math.abs(dist) <= Math.max(v, 0.6)) {
         cannonX = tx; target.fired = true; fired++;
         shots.push({ x: cannonX + 19, y: cy, target }); flashes.push({ x: cannonX + 19, y: cy - 4, at: t });
+        sfx.laser();
       } else cannonX += Math.sign(dist) * v;
     }
     sprite(SPR.cannon, cannonX, cy, 3, C.white);
@@ -971,7 +1067,7 @@ const arcade = (() => {
       sh.y -= 900 * dt;
       ctx.fillStyle = C.white; ctx.fillRect(sh.x - 1.5, sh.y, 3, 12);
       if (sh.y <= sh.target.y + 20) {
-        hits++; sh.target.hitAt = t; sh.done = true;
+        hits++; sh.target.hitAt = t; sh.done = true; sfx.boom();
         booms.push({ x: sh.target.cx + dx - 19, y: sh.target.y, at: t });
         const done = [...(s.sessions || [])].reverse().find(x => x.actor === sh.target.actor && x.end != null);
         popups.push({ x: sh.target.cx + dx, y: sh.target.y - 2, text: '+1', color: C.white, at: t });
@@ -1103,6 +1199,19 @@ const simState = (() => {
   const ev = (kind, agent, text) => { s.events.push({ id: ++s._id, ts: Date.now(), kind, agent, text }); s.events = s.events.slice(-40); };
   return { s, ev };
 })();
+// TRAFFIC in simulated mode: put one idle agent per free pool to work right away
+function simBurst() {
+  const { s } = simState, now = Date.now();
+  const busy = new Set(s.actors.filter(a => a.worker).map(a => a.worker));
+  const poolOf = a => a.agent === 'k8s-assistant-priority' ? 'kagent-high' : a.agent === 'codex-coder' ? 'kagent-coding' : 'kagent-default';
+  let n = 0;
+  for (const w of s.workers) {
+    if (busy.has(w.name) || n >= 4) continue;
+    const a = s.actors.find(x => x.state === 'suspended' && poolOf(x) === w.pool);
+    if (a) { a.state = 'resuming'; a.worker = w.name; a.since = now - 200 * n; busy.add(w.name); n++; }
+  }
+  return n;
+}
 function simTick() {
   if (!sim) return;
   const { s, ev } = simState, now = Date.now();
@@ -1160,6 +1269,7 @@ function apply() {
   $('bTop').classList.toggle('on', onTop);
   $('bClick').classList.toggle('on', clickThru);
   $('bSim').classList.toggle('on', sim);
+  $('bSound').classList.toggle('on', sfx.on);
   $('bLayout').textContent = layout === 'portrait' ? 'WIDE' : 'PORTRAIT';
   if (win) {
     win.setAlwaysOnTop(onTop).catch(() => {});
@@ -1196,6 +1306,16 @@ $('bBack').onclick = () => toggle('panel');
 $('bTop').onclick = () => toggle('top');
 $('bClick').onclick = () => toggle('click');
 $('bSim').onclick = () => toggle('sim');
+async function sendTraffic() {
+  if (sim) { toast(`Simulated burst · ${simBurst()} agents`); return; }
+  try {
+    const n = TAURI ? await TAURI.core.invoke('send_traffic')
+                    : await fetch('/traffic').then(r => r.json()).then(j => { if (j.error) throw j.error; return j.sent; });
+    toast(`Traffic wave · ${n} real chats sent (@k8s @k8sp @code @forti)`);
+  } catch (e) { toast(String(e)); }
+}
+$('bTraffic').onclick = sendTraffic;
+$('bSound').onclick = () => { toast(sfx.toggle() ? 'Sound on' : 'Sound off'); apply(); };
 $('bObs').onclick = async () => {
   const url = TAURI ? await TAURI.core.invoke('obs_url') : location.origin + '/';
   try { await navigator.clipboard.writeText(url); toast(`Copied ${url} — add as OBS Browser Source`); }
@@ -1210,6 +1330,8 @@ addEventListener('keydown', e => {
   else if (k === 'p') toggle('top');
   else if (k === 'i') toggle('click');
   else if (k === 's') toggle('sim');
+  else if (k === 't') sendTraffic();
+  else if (k === 'n') { toast(sfx.toggle() ? 'Sound on' : 'Sound off'); apply(); }
   else if (k === 'escape' && clickThru) toggle('click');
 });
 apply();
