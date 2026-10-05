@@ -35,7 +35,7 @@ Icon: `python3 tools/make_icon.py app/src-tauri/icon-src.png && cargo tauri icon
 
 ## OBS
 
-Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width 1280, height 720.
+Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width 720, height 284 (or any multiple, e.g. 1440×568).
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
 

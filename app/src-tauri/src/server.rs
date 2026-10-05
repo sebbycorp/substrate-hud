@@ -36,10 +36,21 @@ fn handle(mut stream: TcpStream, hub: Arc<Hub>) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request = String::new();
     reader.read_line(&mut request)?;
-    // Drain headers; we route on the request line only.
+    // Only answer requests addressed to loopback: blocks DNS rebinding, so a
+    // web page can't read cluster state through a hostname it controls.
     let mut line = String::new();
+    let mut local_host = false;
     while reader.read_line(&mut line)? > 2 {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.eq_ignore_ascii_case("host") {
+                let host = v.trim().rsplit_once(':').map_or(v.trim(), |(h, _)| h);
+                local_host = host == "127.0.0.1" || host == "localhost";
+            }
+        }
         line.clear();
+    }
+    if !local_host {
+        return write!(stream, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
     }
     let path = request.split_whitespace().nth(1).unwrap_or("/");
     let path = path.split('?').next().unwrap_or("/");
@@ -51,7 +62,7 @@ fn handle(mut stream: TcpStream, hub: Arc<Hub>) -> std::io::Result<()> {
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\
-                 Access-Control-Allow-Origin: *\r\nConnection: keep-alive\r\n\r\n"
+                 Connection: keep-alive\r\n\r\n"
             )?;
             write!(stream, "data: {}\n\n", hub.snapshot())?;
             let (tx, rx) = channel();
@@ -75,7 +86,7 @@ fn respond(stream: &mut TcpStream, ctype: &str, body: &[u8]) -> std::io::Result<
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\n\
-         Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+         Cache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     )?;
     stream.write_all(body)
