@@ -7,7 +7,7 @@
 //! - ate-api-server logs: streamed; every resume/suspend as it happens, with the
 //!   worker the scheduler picked (joined on trace_id)
 
-use crate::model::{agent_label, now_ms, Actor, Hub, Pool, Worker, HARNESSES};
+use crate::model::{agent_label, now_ms, split_template, Actor, Hub, Pool, Worker, HARNESSES, HARNESS_POOLS};
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
@@ -151,6 +151,13 @@ pub fn poll_workers(cfg: Config, hub: Arc<Hub>) {
             // Longest first so `-high` doesn't shadow e.g. `-very-high`.
             names.sort_by_key(|n| std::cmp::Reverse(n.len()));
             *HARNESSES.lock().unwrap() = names;
+            *HARNESS_POOLS.lock().unwrap() = v["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|i| Some((i["metadata"]["name"].as_str()?.to_string(),
+                                      i["spec"]["substrate"]["workerPoolRef"]["name"].as_str()?.to_string())))
+                .collect();
         }
         match (pools, pods) {
             (Ok(pools), Ok(pods)) => {
@@ -250,6 +257,14 @@ fn template_from_proto(hex: &str) -> String {
 const LOG_GRACE_MS: i64 = 45_000;
 
 pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
+    // Template names are split using the Harness list, so give the pool poller a
+    // moment to load it before the first read (else labels keep a `-<harness>` tail).
+    for _ in 0..40 {
+        if !HARNESSES.lock().unwrap().is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
     let sql = "select a.name, a.uid, coalesce(wa.worker_name,''), encode(a.proto,'hex') \
                from actors a left join worker_assignments wa on wa.actor_uid = a.uid \
                where a.atespace <> 'ate-golden'"; // golden-snapshot builders aren't sessions
@@ -297,6 +312,7 @@ pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
                         name: name.clone(),
                         uid: uid.clone(),
                         agent: agent_label(&template),
+                        harness: String::new(),
                         state: state.into(),
                         worker: worker.clone(),
                         since: now,
@@ -304,7 +320,7 @@ pub fn poll_db(cfg: Config, hub: Arc<Hub>) {
                     });
                     // Recompute each poll: the Harness list may have loaded since the first one.
                     if !template.is_empty() {
-                        a.agent = agent_label(&template);
+                        (a.agent, a.harness) = split_template(&template);
                     }
                     if now - a.log_touched > LOG_GRACE_MS && (a.state != state || a.worker != worker) {
                         a.state = state.into();
@@ -417,7 +433,7 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
         }
         let name = v["ate.actor.name"].as_str().unwrap_or("").to_string();
         let uid = v["ate.actor.uid"].as_str().unwrap_or("").to_string();
-        let agent = agent_label(v["ate.template.name"].as_str().unwrap_or(""));
+        let (agent, harness) = split_template(v["ate.template.name"].as_str().unwrap_or(""));
         let op = v["ate.actor.operation.name"].as_str().unwrap_or("");
         let state = v["ate.actor.state"].as_str().unwrap_or("").to_string();
         let pod = picked.get(&trace).cloned();
@@ -426,6 +442,7 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
                 name: name.clone(),
                 uid,
                 agent: agent.clone(),
+                harness: harness.clone(),
                 state: "suspended".into(),
                 worker: None,
                 since: ts,
@@ -436,6 +453,9 @@ fn handle_line(hub: &Hub, v: &Value, picked: &mut HashMap<String, String>, pod_r
             a.log_touched = now_ms();
             if !agent.is_empty() {
                 a.agent = agent.clone();
+            }
+            if !harness.is_empty() {
+                a.harness = harness.clone();
             }
             let label = a.agent.clone();
             match state.as_str() {

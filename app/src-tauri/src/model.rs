@@ -49,6 +49,9 @@ pub struct Actor {
     pub worker: Option<String>,
     /// When `state` last changed (ms since epoch, from the log timestamp).
     pub since: i64,
+    /// Harness from the template name; with `harness_pools` it gives the agent's
+    /// priority tier even while it's suspended and on no worker.
+    pub harness: String,
     /// Set by the log stream; DB snapshots don't override fresh log state.
     #[serde(skip)]
     pub log_touched: i64,
@@ -126,6 +129,7 @@ struct Snapshot<'a> {
     stats: &'a Stats,
     events: Vec<&'a Event>,
     sessions: Vec<&'a Session>,
+    harness_pools: BTreeMap<String, String>,
 }
 
 impl Model {
@@ -207,6 +211,7 @@ impl Model {
             stats: &self.stats,
             events: self.events.iter().collect(),
             sessions: self.sessions.iter().collect(),
+            harness_pools: HARNESS_POOLS.lock().unwrap().clone(),
         };
         serde_json::to_string(&snap).unwrap_or_else(|_| "{}".into())
     }
@@ -252,9 +257,12 @@ impl Hub {
 /// Harness names seen on the cluster, refreshed by the pool poller.
 pub static HARNESSES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// "fortigate-default-a0f8b09338b1" → "fortigate". Template names are
-/// `<agenttemplate>-<harness>-<hash>`.
-pub fn agent_label(template: &str) -> String {
+/// Harness name → its WorkerPool (spec.substrate.workerPoolRef), from the pool poller.
+pub static HARNESS_POOLS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// "fortigate-default-a0f8b09338b1" → ("fortigate", "default"). Template names
+/// are `<agenttemplate>-<harness>-<hash>`.
+pub fn split_template(template: &str) -> (String, String) {
     let mut s = template;
     if let Some((head, tail)) = s.rsplit_once('-') {
         if tail.len() == 12 && tail.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -266,9 +274,13 @@ pub fn agent_label(template: &str) -> String {
     for h in known {
         if let Some(base) = s.strip_suffix(h).and_then(|b| b.strip_suffix('-')) {
             if !base.is_empty() {
-                return base.to_string();
+                return (base.to_string(), h.to_string());
             }
         }
     }
-    s.to_string()
+    (s.to_string(), String::new())
+}
+
+pub fn agent_label(template: &str) -> String {
+    split_template(template).0
 }

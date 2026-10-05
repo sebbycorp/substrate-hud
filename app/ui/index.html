@@ -795,7 +795,8 @@ const arcade = (() => {
   const HANGAR = 146, FALL_START = HANGAR + 34, FALL_FULL = 60_000;  // ms to fall all the way
   let cv, ctx, snap = null, raf = 0, px = 3;
   const occ = new Map();      // worker -> { actor, agent, since, born }
-  let doomed = [], shots = [], booms = [], ufos = [], popups = [], flashes = [];
+  let doomed = [], shots = [], booms = [], ufos = [], popups = [], flashes = [], capsules = [];
+  let storeDest = () => [W / 2, H - 190];
   let lastErr = 0, cannonX = null, fired = 0, hits = 0;
   let clockOff = null, lastT = 0;   // server-minus-local clock offset (smoothed), last frame time
 
@@ -975,6 +976,7 @@ const arcade = (() => {
         const done = [...(s.sessions || [])].reverse().find(x => x.actor === sh.target.actor && x.end != null);
         popups.push({ x: sh.target.cx + dx, y: sh.target.y - 2, text: '+1', color: C.white, at: t });
         popups.push({ x: sh.target.cx + dx, y: sh.target.y + 34, text: done?.checkpoint_ms != null ? `CKPT ${done.checkpoint_ms}MS` : 'CHECKPOINTED', color: C.blue, at: t });
+        capsules.push({ x0: sh.target.cx + dx, y0: sh.target.y + 12, tier: sh.target.tier, at: t + 120 });
       }
     }
     ctx.restore();
@@ -996,11 +998,46 @@ const arcade = (() => {
     }
     ufos = ufos.filter(u => t - u.at < 4500);
 
-    // reserve: checkpointed agents in the snapshot store
-    const stored = s.actors.filter(a => a.state === 'suspended').length;
-    text(`RESERVE  ${stored}`, PAD, groundY + 22, 10, C.blue);
-    const per = Math.floor((W - 2 * PAD) / 18);
-    for (let i = 0; i < Math.min(stored, per * 5); i++) sprite(SPR.mark, PAD + (i % per) * 18, groundY + 32 + Math.floor(i / per) * 15, 2, C.blue);
+    // suspended: every checkpointed agent, coloured by priority and grouped by agent
+    const rank = { high: 0, coding: 1, low: 2 };
+    const actorTier = a => { const pool = s.pools.find(p => p.name === (s.harness_pools || {})[a.harness]); return pool ? tierOf(pool) : 'low'; };
+    const susp = s.actors.filter(a => a.state === 'suspended').map(a => ({ agent: a.agent || 'agent', tier: actorTier(a) }))
+      .sort((x, y) => (rank[x.tier] ?? 2) - (rank[y.tier] ?? 2) || x.agent.localeCompare(y.agent));
+    text(`SUSPENDED  ${susp.length}`, PAD, groundY + 22, 10, C.white);
+    text('SNAPSHOT STORE', W - PAD, groundY + 22, 8, C.dim, 'right');
+    const per = Math.floor((W - 2 * PAD) / 18), maxN = per * 5;
+    const slotXY = i => [PAD + (i % per) * 18, groundY + 32 + Math.floor(i / per) * 15];
+    const shown = susp.slice(0, maxN);
+    shown.forEach((x, i) => { const [ix, iy] = slotXY(i); sprite(SPR.mark, ix, iy, 2, tierInfo(x.tier).color); });
+    // where a newly suspended agent of each tier lands: the end of its tier's run
+    const endOf = {};
+    shown.forEach((x, i) => { endOf[x.tier] = i + 1; });
+    for (const tr of ['high', 'coding', 'low']) if (endOf[tr] == null) endOf[tr] = tr === 'high' ? 0 : endOf[tr === 'coding' ? 'high' : 'coding'] ?? 0;
+    storeDest = tr => slotXY(Math.min(endOf[tr] ?? shown.length, maxN - 1));
+    // per-agent counts in priority colours, wrapping
+    const counts = [];
+    for (const x of susp) { const last = counts[counts.length - 1]; if (last && last.agent === x.agent && last.tier === x.tier) last.n++; else counts.push({ ...x, n: 1 }); }
+    let cx2 = PAD, cy2 = groundY + 32 + Math.max(1, Math.ceil(shown.length / per)) * 15 + 12;
+    ctx.font = `8.5px ${FONT}`;
+    for (const c of counts) {
+      const label = `${c.n} ${c.agent.toUpperCase()}`, w = ctx.measureText(label).width;
+      if (cx2 + w > W - PAD && cx2 > PAD) { cx2 = PAD; cy2 += 13; }
+      text(label, cx2, cy2, 8.5, tierInfo(c.tier).color); cx2 += w + 12;
+    }
+
+    // capsules: a shot invader drops into its place in the store
+    for (const k of capsules) {
+      const u = Math.min(1, (t - k.at) / 900), [dx1, dy1] = storeDest(k.tier);
+      const x = k.x0 + (dx1 + 8 - k.x0) * (u < .5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
+      const y = k.y0 + (dy1 + 6 - k.y0) * u * u;            // falls, accelerating
+      if (u < 1) sprite(SPR.mark, x - 8, y - 6, 2, tierInfo(k.tier).color, 1, true);
+      else {
+        const v = (t - k.at - 900) / 350;                    // landing ping
+        ctx.save(); ctx.globalAlpha = Math.max(0, 1 - v); ctx.strokeStyle = tierInfo(k.tier).color; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(dx1 + 8, dy1 + 6, 6 + v * 10, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      }
+    }
+    capsules = capsules.filter(k => t - k.at < 1250);
 
     // last few events
     (s.events || []).slice(-3).reverse().forEach((e, i) => {
@@ -1051,6 +1088,7 @@ const simState = (() => {
     .map(([pool, name], i) => ({ name, uid: 'u' + i, pool, phase: 'Running', ready: true, sessions: 0 }));
   const actors = Array.from({ length: 54 }, (_, i) => ({
     name: `ai-sim-${i}`, uid: 's' + i, agent: i < 6 ? 'k8s-assistant-priority' : i < 10 ? 'codex-coder' : agents[i % 7 % agents.length],
+    harness: i < 6 ? 'high' : i < 10 ? 'coding' : 'default',
     state: 'suspended', worker: null, since: Date.now(),
   }));
   const s = {
@@ -1060,6 +1098,7 @@ const simState = (() => {
             { namespace: 'kagent', name: 'kagent-default', desired: 3, ready: 3, priority_class: '', tier: '' }], workers, actors,
     stats: { resumes: 0, suspends: 0, creates: 0, errors: 0, p50_restore_ms: null, events_per_min: 0 },
     events: [], sessions: [], _id: 0, _lat: [],
+    harness_pools: { high: 'kagent-high', coding: 'kagent-coding', default: 'kagent-default' },
   };
   const ev = (kind, agent, text) => { s.events.push({ id: ++s._id, ts: Date.now(), kind, agent, text }); s.events = s.events.slice(-40); };
   return { s, ev };

@@ -47,7 +47,9 @@ last 5 minutes (`?chart=10` for 10). `?theme=invaders`: Space Invaders. Each wor
 is a column with a hangar; a running agent's invader, coloured by priority (red
 high, white coding, blue low), leaves the hangar and slowly falls, and the cannon
 shoots it down when it checkpoints (restore and checkpoint latencies pop up).
-Errors fly past as the red UFO; agents waiting for a worker hover in red. `?theme=timeline`: a lane per worker showing the last 2 minutes
+Errors fly past as the red UFO; agents waiting for a worker hover in red.
+A shot invader drops into the SUSPENDED row (the snapshot store), which is
+coloured by priority and grouped by agent with counts. `?theme=timeline`: a lane per worker showing the last 2 minutes
 (`?window=5` for 5), where each session leaves a block labelled with its agent,
 green while running. The wide strip falls back to bars.
 Alternative, `?theme=bars`: one bar per worker pool with a segment per worker;
