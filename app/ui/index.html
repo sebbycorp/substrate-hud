@@ -95,16 +95,18 @@
   .bay .who { position: absolute; left: 14px; right: 14px; top: 34px; font: 500 12px/1.5 var(--sans);
               color: var(--green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  /* Agents are the kagent mark, tinted by state via currentColor. */
   .dot {
-    position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 50%;
-    background: var(--blue); opacity: .75;
-    transition: transform 1s var(--ease), background .5s, opacity .5s, width .5s, height .5s, box-shadow .5s;
+    position: absolute; left: 0; top: 0; width: 18px; height: 13.5px;
+    color: var(--blue); opacity: .8;
+    transition: transform 1s var(--ease), color .5s, opacity .5s, width .5s, height .5s, filter .5s;
   }
-  .dot.running { background: var(--green); opacity: 1; width: 16px; height: 16px;
-                 box-shadow: 0 0 14px rgba(46, 229, 157, .7); }
-  .dot.resuming, .dot.suspending { background: var(--white); opacity: 1; width: 14px; height: 14px;
-                                   box-shadow: 0 0 12px rgba(255, 255, 255, .6); }
-  .dot.waiting { background: var(--red); box-shadow: 0 0 12px rgba(255, 77, 94, .7); }
+  .dot svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .dot.running { color: var(--green); opacity: 1; width: 44px; height: 33px;
+                 filter: drop-shadow(0 0 8px rgba(46, 229, 157, .65)); }
+  .dot.resuming, .dot.suspending { color: var(--white); opacity: 1; width: 24px; height: 18px;
+                                   filter: drop-shadow(0 0 7px rgba(255, 255, 255, .55)); }
+  .dot.waiting { color: var(--red); filter: drop-shadow(0 0 8px rgba(255, 77, 94, .7)); }
   .dot.gone { opacity: 0; }
 
   #legend { position: absolute; left: 56px; right: 56px; top: 640px; display: flex; gap: 22px;
@@ -211,6 +213,9 @@ function toast(msg) {
 }
 
 // ── rendering ──────────────────────────────────────────────────────────
+// kagent mark on an 8×6 grid; evenodd keeps the face window see-through.
+const AGENT_SVG = '<svg viewBox="0 0 8 6" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" ' +
+  'd="M2 0H6L8 2V5H7V6H2L0 4V2H1V1H2Z M2 2V5H7V2Z M3 3H4V4H3Z M5 3H6V4H5Z"/></svg>';
 const bayEls = new Map(), dotEls = new Map(), seenEvents = new Set();
 let last = null;
 
@@ -300,20 +305,20 @@ function render(s) {
   }
 
   // dots: storage grid for suspended, bay slots for hosted, queue for orphans
-  const STORE_Y = 534, STEP = 20, storeW = W - PAD * 2 - 440;
+  const STORE_Y = 532, STEP = 25, ROW = 20, storeW = W - PAD * 2 - 440;
   const perRow = Math.floor(storeW / STEP);
   const suspended = s.actors.filter(a => a.state === 'suspended' || (a.state === 'suspending' && !a.worker));
   const slot = new Map();
-  suspended.forEach((a, i) => slot.set(a.name, { x: PAD + (i % perRow) * STEP, y: STORE_Y + Math.floor(i / perRow) * STEP }));
+  suspended.forEach((a, i) => slot.set(a.name, { x: PAD + (i % perRow) * STEP, y: STORE_Y + Math.floor(i / perRow) * ROW }));
   for (const [worker, list] of hosted) {
     const p = pos.get(worker); if (!p) continue;
-    list.forEach((a, i) => slot.set(a.name, { x: p.x + 16 + (i % 8) * 26, y: 220 + 92 + Math.floor(i / 8) * 26 }));
+    list.forEach((a, i) => slot.set(a.name, { x: p.x + 16 + (i % 4) * 56, y: 220 + 76 + Math.floor(i / 4) * 44 }));
   }
   let q = 0;
   for (const a of s.actors) if (!slot.has(a.name)) {
     // resuming/suspending with an unknown or departed worker: hold mid-air
     const p = a.worker && pos.get(a.worker);
-    slot.set(a.name, p ? { x: p.x + p.w / 2 - 7, y: 440 } : { x: W / 2 - 60 + (q++) * 22, y: 452 });
+    slot.set(a.name, p ? { x: p.x + p.w / 2 - 12, y: 438 } : { x: W / 2 - 60 + (q++) * 30, y: 450 });
   }
   const live2 = new Set();
   for (const a of s.actors) {
@@ -323,6 +328,7 @@ function render(s) {
     if (!d) {
       d = document.createElement('div');
       d.className = 'dot gone';
+      d.innerHTML = AGENT_SVG;
       d.style.transform = `translate(${p.x}px, ${p.y + 30}px)`;
       $('dots').appendChild(d); dotEls.set(a.name, d);
       void d.offsetWidth;
