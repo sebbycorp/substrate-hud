@@ -158,15 +158,31 @@
   body.portrait #error { left: 18px; right: 18px; top: auto; bottom: 14px; white-space: normal; }
   .ev .n { color: var(--red); font-weight: 800; margin-left: 4px; }
 
-  /* ── rings theme (default): workers are circles, no boxes ─────── */
-  body.rings { --dim: rgba(255, 255, 255, .86); --blue: #4aa3ff; --green: #34f0a4; --red: #ff4f61; }
-  body.rings .stage { text-shadow: 0 1px 3px rgba(0, 0, 0, .9), 0 0 2px rgba(0, 0, 0, .9), 0 0 8px rgba(0, 0, 0, .45); }
-  body.rings .stat .v { font-weight: 800; }
-  body.rings .stat .k, body.rings .band-label, body.rings .ptag b { font-weight: 800; }
-  body.rings .ptag { font-size: 10px; font-weight: 800; color: var(--white); }
-  body.rings .ptag b { font-size: 9px; }
-  body.rings .ptag::before { border-radius: 50%; width: 7px; height: 7px; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .5); }
-  body.rings .rule { height: 2px; background: rgba(255, 255, 255, .7); box-shadow: 0 1px 3px rgba(0, 0, 0, .7); }
+  /* ── bars theme (default): one segmented bar per pool ───────── */
+  body.bars .bay { border-radius: 5px; border: 2px solid rgba(255, 255, 255, .88); background: rgba(0, 0, 0, .28);
+                   box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .5); }
+  body.bars .bay.busy { border-color: var(--green); background: rgba(52, 240, 164, .9);
+                        box-shadow: 0 0 0 1px rgba(0, 0, 0, .45), 0 0 14px rgba(52, 240, 164, .55); }
+  body.bars .bay.warm { border-style: dashed; }
+  body.bars .bay .name, body.bars .bay .meta, body.bars .bay .ring-n { display: none; }
+  body.bars .bay .who { display: none; top: calc(100% + 5px); bottom: auto; left: 0; right: auto; width: calc(100% + 30px);
+                        font: 800 9px/1.1 var(--sans); color: var(--green); }
+  body.bars .bay.busy .who { display: block; }
+  body.bars .ptag { display: flex; align-items: center; }
+  body.bars .ptag .busy { margin-left: auto; color: var(--white); font: 800 9px/1 var(--sans); letter-spacing: .06em; }
+  body.bars .ptag .busy.full { color: var(--red); }
+  body.bars .dot.running { color: #062b1c; filter: none; width: 22px; height: 16.5px; }
+  body.bars .dot.running svg { filter: none; }
+
+  /* ── rings theme: workers are circles, no boxes ─────── */
+  body.bold { --dim: rgba(255, 255, 255, .86); --blue: #4aa3ff; --green: #34f0a4; --red: #ff4f61; }
+  body.bold .stage { text-shadow: 0 1px 3px rgba(0, 0, 0, .9), 0 0 2px rgba(0, 0, 0, .9), 0 0 8px rgba(0, 0, 0, .45); }
+  body.bold .stat .v { font-weight: 800; }
+  body.bold .stat .k, body.bold .band-label, body.bold .ptag b { font-weight: 800; }
+  body.bold .ptag { font-size: 10px; font-weight: 800; color: var(--white); }
+  body.bold .ptag b { font-size: 9px; }
+  body.bold .ptag::before { border-radius: 50%; width: 7px; height: 7px; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, .5); }
+  body.bold .rule { height: 2px; background: rgba(255, 255, 255, .7); box-shadow: 0 1px 3px rgba(0, 0, 0, .7); }
   body.rings .bay {
     border-radius: 50%; border: 3px solid rgba(255, 255, 255, .9);
     background: rgba(0, 0, 0, .22);
@@ -190,10 +206,11 @@
     border-radius: 8px; background: var(--white); color: #0b0f17; font: 800 9px/15px var(--sans);
     text-align: center; text-shadow: none; box-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
   body:not(.rings) .bay .ring-n { display: none; }
-  body.rings .dot svg { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .8)); }
+  body:not(.bars) .ptag .busy { display: none; }
+  body.bold .dot svg { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .8)); }
   body.rings .dot.running { filter: drop-shadow(0 0 6px rgba(52, 240, 164, .7)); }
-  body.rings .ev .a, body.rings #legend b { font-weight: 800; }
-  body.rings .ev, body.rings #legend { color: rgba(255, 255, 255, .9); font-weight: 700; }
+  body.bold .ev .a, body.bold #legend b { font-weight: 800; }
+  body.bold .ev, body.bold #legend { color: rgba(255, 255, 255, .9); font-weight: 700; }
 
   /* ── whiteboard theme: marker on a board ───────────── */
   /* Default: white marker straight on the (transparent) OBS scene.
@@ -277,7 +294,7 @@
 </svg>
 <div id="bar">
   <button id="bLayout" title="Portrait rail / wide strip (L)">LAYOUT</button>
-  <button id="bTheme" title="Cycle look: rings / whiteboard / glass (W)">THEME</button>
+  <button id="bTheme" title="Cycle look: bars / rings / whiteboard / glass (W)">THEME</button>
   <button id="bBack" title="Board / panel behind the HUD (B) — off is transparent">BOARD</button>
   <button id="bTop" title="Keep on top (P)">ON TOP</button>
   <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
@@ -348,9 +365,9 @@ const bp = params.get('board') ?? params.get('panel');
 let backdrop = bp != null ? bp !== '0' : (TAURI ? store.get('board', false) : false);
 let sim = params.get('sim') === '1';
 // whiteboard is the default look; ?theme=glass (or W in the app) for the transparent one
-const THEMES = ['rings', 'wb', 'glass'];
+const THEMES = ['bars', 'rings', 'wb', 'glass'];
 const savedTheme = (() => { try { return localStorage.getItem('hud.theme'); } catch { return null; } })();
-let theme = THEMES.includes(params.get('theme')) ? params.get('theme') : (TAURI && THEMES.includes(savedTheme) ? savedTheme : 'rings');
+let theme = THEMES.includes(params.get('theme')) ? params.get('theme') : (TAURI && THEMES.includes(savedTheme) ? savedTheme : 'bars');
 setLayout(params.has('layout') ? (params.get('layout') === 'wide' ? 'wide' : 'portrait')
                                : (TAURI && store.get('wide', false) ? 'wide' : 'portrait'));
 
@@ -396,7 +413,26 @@ function layoutBays(workers, pools) {
   const groups = groupWorkers(workers, pools);
   const tiered = groups.length > 1 || groups.some(g => tierOf(g.pool) !== 'low');
   const n = Math.max(workers.length, 1), G = Math.max(groups.length, 1), pos = new Map(), tags = [];
-  const tag = (g, x, y) => tiered && tags.push({ key: g.pool.name, x, y, pool: g.pool, tier: tierOf(g.pool) });
+  const tag = (g, x, y, w) => (tiered || theme === 'bars') && tags.push({ key: g.pool.name, x, y, w, pool: g.pool, tier: tierOf(g.pool), workers: g.workers });
+  if (theme === 'bars') {
+    // one bar per pool, one segment per worker
+    const gap = 4, BAR = 24;
+    const seg = (g, x0, width, y) => {
+      const k = Math.max(g.workers.length, 1), w = (width - gap * (k - 1)) / k;
+      g.workers.forEach((wk, i) => pos.set(wk.name, { x: x0 + i * (w + gap), y, w, h: BAR }));
+    };
+    if (layout === 'portrait') {
+      let y = 190;
+      for (const g of groups) {
+        tag(g, PAD, y, W - PAD * 2); y += 17;
+        seg(g, PAD, W - PAD * 2, y); y += BAR + 30;
+      }
+      return { pos, tags, bottom: y - 14 };
+    }
+    const GROUP = 18, gw = (W - PAD * 2 - GROUP * (G - 1)) / G;
+    groups.forEach((g, i) => { const x = PAD + i * (gw + GROUP); tag(g, x, 86, gw); seg(g, x, gw, 102); });
+    return { pos, tags, bottom: 170 };
+  }
   if (theme === 'rings') {
     // workers are rings: rows under each pool title (portrait), groups side by side (wide)
     const D = 44, gap = 32, GROUP = 26;
@@ -474,15 +510,19 @@ function render(s) {
   // bays
   const { pos, tags, bottom } = layoutBays(workers, s.pools);
   $('lblPool').style.visibility = layout === 'wide' && tags.length ? 'hidden' : '';
-  $('pooltags').innerHTML = tags.map(t =>
-    `<div class="ptag t-${esc(t.tier)}" style="left:${t.x}px;top:${t.y}px">${esc(t.pool.name)}` +
-    `<b>${TIER_LABEL[t.tier] || esc(t.tier.toUpperCase())}</b><span>${t.pool.ready ?? 0}/${t.pool.desired ?? 0}</span></div>`).join('');
   const highPools = new Set(tags.filter(t => t.tier === 'high').map(t => t.key));
   const hosted = new Map();
   for (const a of s.actors) if (a.worker && (a.state === 'running' || a.state === 'resuming')) {
     if (!hosted.has(a.worker)) hosted.set(a.worker, []);
     hosted.get(a.worker).push(a);
   }
+  $('pooltags').innerHTML = tags.map(t => {
+    const busy = t.workers.filter(w => (hosted.get(w.name) || []).length).length, n = t.workers.length;
+    return `<div class="ptag t-${esc(t.tier)}" style="left:${t.x}px;top:${t.y}px${t.w ? `;width:${t.w}px` : ''}">${esc(t.pool.name)}` +
+      `<b>${TIER_LABEL[t.tier] || esc(t.tier.toUpperCase())}</b>` +
+      (theme === 'bars' ? `<span class="busy${n && busy === n ? ' full' : ''}">${busy}/${n} BUSY</span>`
+                        : `<span>${t.pool.ready ?? 0}/${t.pool.desired ?? 0}</span>`) + `</div>`;
+  }).join('');
   const alive = new Set();
   for (const wk of workers) {
     alive.add(wk.name);
@@ -533,6 +573,10 @@ function render(s) {
     const p = pos.get(worker); if (!p) continue;
     if (theme === 'rings') {
       list.forEach((a, i) => slot.set(a.name, { x: p.x + (p.w - 28) / 2 + i * 6, y: p.y + (p.h - 21) / 2 - i * 4 }));
+      continue;
+    }
+    if (theme === 'bars') {
+      list.forEach((a, i) => slot.set(a.name, { x: p.x + 6 + i * 26, y: p.y + (p.h - 16.5) / 2 }));
       continue;
     }
     if (portrait) {
@@ -686,11 +730,13 @@ let onTop = TAURI ? store.get('top', false) : false, clickThru = false;
 function apply() {
   document.body.classList.toggle('wb', theme === 'wb');
   document.body.classList.toggle('rings', theme === 'rings');
+  document.body.classList.toggle('bars', theme === 'bars');
+  document.body.classList.toggle('bold', theme === 'rings' || theme === 'bars');
   document.body.classList.toggle('backdrop', backdrop);
   document.body.classList.toggle('board', theme === 'wb' && backdrop);
   document.body.classList.toggle('clickthru', clickThru);
   $('bBack').classList.toggle('on', backdrop);
-  $('bTheme').textContent = { rings: 'RINGS', wb: 'WHITEBOARD', glass: 'GLASS' }[theme];
+  $('bTheme').textContent = { bars: 'BARS', rings: 'RINGS', wb: 'WHITEBOARD', glass: 'GLASS' }[theme];
   $('bTop').classList.toggle('on', onTop);
   $('bClick').classList.toggle('on', clickThru);
   $('bSim').classList.toggle('on', sim);
@@ -711,7 +757,7 @@ function toggle(what) {
   if (what === 'theme') {
     theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
     try { localStorage.setItem('hud.theme', theme); } catch {}
-    toast({ rings: 'Rings', wb: 'Whiteboard', glass: 'Glass' }[theme]);
+    toast({ bars: 'Bars', rings: 'Rings', wb: 'Whiteboard', glass: 'Glass' }[theme]);
     if (last && !sim) render(last);
   }
   if (what === 'layout') {
