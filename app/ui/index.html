@@ -6,9 +6,9 @@
 <title>Substrate HUD</title>
 <style>
   :root {
-    --white: #f4f7fb;
-    --dim: rgba(244, 247, 251, 0.55);
-    --faint: rgba(244, 247, 251, 0.18);
+    --white: #ffffff;
+    --dim: rgba(255, 255, 255, 0.82);
+    --faint: rgba(255, 255, 255, 0.45);
     --blue: #3d9bff;
     --green: #2ee59d;
     --red: #ff4d5e;
@@ -26,7 +26,7 @@
     user-select: none; -webkit-user-select: none;
   }
   /* Legibility over busy scenes without a visible box. */
-  .stage { text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+  .stage { text-shadow: 0 1px 3px rgba(0, 0, 0, .7), 0 0 1px rgba(0, 0, 0, .6); }
 
   /* Compact 720×284 stage; fit() scales it to the window / OBS source. */
   #stage {
@@ -46,10 +46,10 @@
   header { position: absolute; left: 24px; right: 24px; top: 14px; height: 14px;
            display: flex; align-items: center; gap: 10px; }
   body.app header { left: 78px; } /* clear the traffic lights */
-  .brand { font: 600 9px/1 var(--sans); letter-spacing: .22em; }
-  .ctx { font: 500 9px/1 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand { font: 800 10px/1 var(--sans); letter-spacing: .22em; }
+  .ctx { font: 600 9.5px/1 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .live { margin-left: auto; display: flex; align-items: center; gap: 6px;
-          font: 600 8px/1 var(--sans); letter-spacing: .18em; color: var(--dim); }
+          font: 800 8.5px/1 var(--sans); letter-spacing: .18em; color: var(--dim); }
   .live i { width: 6px; height: 6px; border-radius: 50%; background: var(--green);
             box-shadow: 0 0 8px var(--green); animation: breathe 2.4s ease-in-out infinite; }
   .live.down i { background: var(--red); box-shadow: 0 0 8px var(--red); animation: none; }
@@ -59,48 +59,50 @@
   /* ── stats ──────────────────────────────────────────── */
   #stats { position: absolute; left: 24px; right: 24px; top: 36px;
            display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
-  .stat .k { font: 600 7px/1 var(--sans); letter-spacing: .2em; color: var(--dim); }
-  .stat .v { margin-top: 5px; font: 300 22px/1 var(--sans); font-variant-numeric: tabular-nums;
+  .stat .k { font: 800 7.5px/1 var(--sans); letter-spacing: .2em; color: var(--dim); }
+  .stat .v { margin-top: 5px; font: 700 23px/1 var(--sans); font-variant-numeric: tabular-nums;
              letter-spacing: -.02em; transition: color .4s; }
-  .stat .v small { font-size: 10px; color: var(--dim); margin-left: 2px; letter-spacing: 0; }
+  .stat .v small { font-size: 10px; font-weight: 600; color: var(--dim); margin-left: 2px; letter-spacing: 0; }
   .stat .v.green { color: var(--green); }
   .stat .v.blue { color: var(--blue); }
   .stat .v.red { color: var(--red); }
 
   /* ── bands ──────────────────────────────────────────── */
-  .band-label { position: absolute; left: 24px; font: 600 7px/1 var(--sans);
+  .band-label { position: absolute; left: 24px; font: 800 7.5px/1 var(--sans);
                 letter-spacing: .2em; color: var(--dim); }
-  .band-label b { color: var(--white); font-weight: 600; margin-left: 6px; letter-spacing: .05em; }
+  .band-label b { color: var(--white); font-weight: 800; margin-left: 6px; letter-spacing: .05em; }
   #lblPool { top: 84px; }
   #lblStore { top: 182px; }
-  .rule { position: absolute; left: 24px; right: 24px; height: 1px; background: var(--faint); }
+  .rule { position: absolute; left: 24px; right: 24px; height: 1.5px; background: var(--faint); }
   #ruleStore { top: 194px; }
 
   .bay {
     position: absolute; top: 98px; height: 72px;
-    border: 1px solid var(--faint); border-radius: 9px;
-    transition: left .7s var(--ease), width .7s var(--ease), border-color .5s, opacity .6s, box-shadow .5s;
+    border: 2px solid var(--faint); border-radius: 9px;
+    transition: left .7s var(--ease), top .7s var(--ease), width .7s var(--ease), height .7s var(--ease),
+                border-color .5s, opacity .6s, box-shadow .5s;
     opacity: 0;
   }
+  .bay.short .who { display: none; }
   .bay.in { opacity: 1; }
   .bay.busy { border-color: rgba(46, 229, 157, .75); box-shadow: 0 0 16px rgba(46, 229, 157, .12) inset; }
   .bay.warm { border-style: dashed; }
   .bay.pulse { animation: pulse .9s var(--ease); }
   @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(46, 229, 157, .55); } 100% { box-shadow: 0 0 0 10px rgba(46, 229, 157, 0); } }
-  .bay .name { position: absolute; left: 9px; top: 8px; max-width: 45%; font: 500 9px/1 var(--mono);
+  .bay .name { position: absolute; left: 9px; top: 8px; max-width: 45%; font: 700 10px/1 var(--mono);
                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bay .meta { position: absolute; right: 9px; top: 8px; display: flex; gap: 8px;
-               font: 600 7px/9px var(--sans); letter-spacing: .14em; color: var(--dim); }
+               font: 800 7.5px/9px var(--sans); letter-spacing: .14em; color: var(--dim); }
   .bay .meta .st { color: var(--blue); }
   .bay.busy .meta .st { color: var(--green); }
   .bay.warm .meta .st { color: var(--white); }
-  .bay .who { position: absolute; left: 9px; right: 9px; bottom: 7px; font: 500 9px/1 var(--sans);
+  .bay .who { position: absolute; left: 9px; right: 9px; bottom: 7px; font: 700 9.5px/1 var(--sans);
               color: var(--green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* Agents are the kagent mark, tinted by state via currentColor. */
   .dot {
     position: absolute; left: 0; top: 0; width: 13px; height: 9.75px;
-    color: var(--blue); opacity: .8;
+    color: var(--blue); opacity: 1;
     transition: transform 1s var(--ease), color .5s, opacity .5s, width .5s, height .5s, filter .5s;
   }
   .dot svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -112,26 +114,44 @@
   .dot.gone { opacity: 0; }
 
   #legend { position: absolute; left: 24px; right: 290px; top: 256px; display: flex; gap: 14px;
-            font: 500 8px/1 var(--sans); color: var(--dim); letter-spacing: .04em; white-space: nowrap; overflow: hidden; }
-  #legend b { color: var(--white); font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
+            font: 700 8.5px/1 var(--sans); color: var(--dim); letter-spacing: .04em; white-space: nowrap; overflow: hidden; }
+  #legend b { color: var(--white); font-weight: 800; margin-right: 4px; font-variant-numeric: tabular-nums; }
 
   /* ── event ticker (right of the store; the store wraps short of it) ── */
   #ticker { position: absolute; right: 24px; top: 202px; width: 260px; display: flex;
             flex-direction: column-reverse; gap: 3px; pointer-events: none; }
-  .ev { font: 500 8.5px/1.3 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden;
+  .ev { font: 600 8.5px/1.35 var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden;
         text-overflow: ellipsis; text-align: right; animation: evIn .5s var(--ease); }
-  .ev .a { color: var(--white); }
+  .ev .a { color: var(--white); font-weight: 800; }
   .ev.restore .tag { color: var(--green); }
   .ev.suspend .tag, .ev.create .tag { color: var(--blue); }
   .ev.error .tag, .ev.error .a { color: var(--red); }
   .ev.info .tag { color: var(--white); }
   @keyframes evIn { from { opacity: 0; transform: translateY(6px); } }
 
-  #error { position: absolute; left: 24px; right: 24px; top: 270px; font: 500 8px/1.2 var(--mono);
+  #error { position: absolute; left: 24px; right: 24px; top: 270px; font: 700 8px/1.2 var(--mono);
            color: var(--red); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  /* ── portrait: a side rail (default) ─────────────────── */
+  body.portrait header { flex-wrap: wrap; height: auto; top: 30px; left: 18px; right: 18px; row-gap: 7px; }
+  body.portrait.app header { left: 18px; }
+  body.portrait .ctx { order: 3; flex-basis: 100%; }
+  body.portrait #stats { left: 18px; right: 18px; top: 76px; grid-template-columns: repeat(3, 1fr); row-gap: 14px; }
+  body.portrait .band-label, body.portrait .rule { left: 18px; }
+  body.portrait .rule { right: 18px; }
+  body.portrait #lblPool { top: 172px; }
+  body.portrait #lblStore { top: 398px; }
+  body.portrait #ruleStore { top: 410px; }
+  body.portrait .bay .who { top: 23px; bottom: auto; right: 45%; }
+  body.portrait .bay .meta { top: auto; bottom: 8px; left: 9px; right: auto; }
+  body.portrait #legend { left: 18px; right: 18px; top: 538px; flex-wrap: wrap; row-gap: 6px; }
+  body.portrait #ticker { left: 18px; right: 18px; width: auto; top: 572px; flex-direction: column-reverse; }
+  body.portrait .ev { text-align: left; }
+  body.portrait #error { left: 18px; right: 18px; top: 656px; white-space: normal; }
+
   /* ── app-window toolbar (never shown in OBS Browser Source) ───────── */
-  #bar { position: fixed; top: 10px; right: 12px; display: none; gap: 6px; opacity: 0;
+  #bar { position: fixed; top: 10px; right: 12px; left: 80px; display: none; flex-wrap: wrap;
+         justify-content: flex-end; gap: 6px; opacity: 0;
          transition: opacity .2s; z-index: 10; }
   body.app #bar { display: flex; }
   body.app:hover #bar { opacity: 1; }
@@ -151,6 +171,7 @@
 <body>
 <div id="drag" data-tauri-drag-region></div>
 <div id="bar">
+  <button id="bLayout" title="Portrait rail / wide strip (L)">LAYOUT</button>
   <button id="bBack" title="Dark panel behind the HUD (B)">PANEL</button>
   <button id="bTop" title="Keep on top (P)">ON TOP</button>
   <button id="bClick" title="Clicks pass through to apps underneath (I · Esc to exit)">CLICK-THRU</button>
@@ -190,14 +211,24 @@
 const $ = id => document.getElementById(id);
 const TAURI = window.__TAURI__;
 const params = new URLSearchParams(location.search);
-const W = 720, H = 284, PAD = 24;
+// Portrait is a side rail (default); wide is a lower-third strip.
+const LAYOUTS = { portrait: { W: 320, H: 680, PAD: 18 }, wide: { W: 720, H: 284, PAD: 24 } };
+let layout = 'portrait', W, H, PAD;
 
-// ── fit the 1280×720 stage to any window / OBS source size ─────────────
+// ── fit the stage to any window / OBS source size ──────────────────────
 function fit() {
   const s = Math.min(innerWidth / W, innerHeight / H);
   $('stage').style.transform = `scale(${s}) translate(-50%, -50%)`;
 }
-addEventListener('resize', fit); fit();
+addEventListener('resize', fit);
+function setLayout(name) {
+  layout = name;
+  ({ W, H, PAD } = LAYOUTS[name]);
+  document.body.classList.toggle('portrait', name === 'portrait');
+  $('stage').style.width = W + 'px';
+  $('stage').style.height = H + 'px';
+  fit();
+}
 
 // ── prefs (app window only; OBS gets query params) ─────────────────────
 const store = {
@@ -207,6 +238,8 @@ const store = {
 if (TAURI) document.body.classList.add('app');
 let backdrop = params.has('panel') ? params.get('panel') !== '0' : (TAURI ? store.get('panel', true) : false);
 let sim = params.get('sim') === '1';
+setLayout(params.has('layout') ? (params.get('layout') === 'wide' ? 'wide' : 'portrait')
+                               : (TAURI && store.get('wide', false) ? 'wide' : 'portrait'));
 
 function toast(msg) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
@@ -231,12 +264,18 @@ function ago(ms) {
 }
 
 function layoutBays(workers) {
-  const n = Math.max(workers.length, 1), gap = 10, avail = W - PAD * 2;
+  const n = Math.max(workers.length, 1), pos = new Map();
+  if (layout === 'portrait') {
+    // stacked full-width bays between the pool label and the store
+    const gap = 8, h = Math.min(58, (202 - gap * (n - 1)) / n);
+    workers.forEach((wk, i) => pos.set(wk.name, { x: PAD, y: 186 + i * (h + gap), w: W - PAD * 2, h }));
+    return pos;
+  }
+  const gap = 10, avail = W - PAD * 2;
   const w = Math.min(200, (avail - gap * (n - 1)) / n);
   const total = w * n + gap * (n - 1);
   const x0 = PAD + (avail - total) / 2;
-  const pos = new Map();
-  workers.forEach((wk, i) => pos.set(wk.name, { x: x0 + i * (w + gap), w }));
+  workers.forEach((wk, i) => pos.set(wk.name, { x: x0 + i * (w + gap), y: 98, w, h: 72 }));
   return pos;
 }
 
@@ -289,6 +328,8 @@ function render(s) {
     }
     const p = pos.get(wk.name);
     el.style.left = p.x + 'px'; el.style.width = p.w + 'px';
+    el.style.top = p.y + 'px'; el.style.height = p.h + 'px';
+    el.classList.toggle('short', p.h < 50);
     const here = hosted.get(wk.name) || [];
     el.classList.toggle('busy', here.some(a => a.state === 'running'));
     el.classList.toggle('warm', !wk.ready);
@@ -306,21 +347,27 @@ function render(s) {
   }
 
   // dots: storage grid for suspended, bay slots for hosted, queue for orphans
-  const STORE_Y = 204, STEP = 17, ROW = 15, storeW = W - PAD * 2 - 276;
+  const portrait = layout === 'portrait';
+  const STORE_Y = portrait ? 422 : 204, STEP = 17, ROW = 15, storeW = W - PAD * 2 - (portrait ? 0 : 276);
   const perRow = Math.floor(storeW / STEP);
   const suspended = s.actors.filter(a => a.state === 'suspended' || (a.state === 'suspending' && !a.worker));
   const slot = new Map();
   suspended.forEach((a, i) => slot.set(a.name, { x: PAD + (i % perRow) * STEP, y: STORE_Y + Math.floor(i / perRow) * ROW }));
   for (const [worker, list] of hosted) {
     const p = pos.get(worker); if (!p) continue;
+    if (portrait) {
+      // right side of the bay, vertically centred, filling leftwards
+      list.forEach((a, i) => slot.set(a.name, { x: p.x + p.w - 37 - (i % 4) * 34, y: p.y + (p.h - 21) / 2 }));
+      continue;
+    }
     const per = Math.max(1, Math.floor((p.w - 18) / 34));
-    list.forEach((a, i) => slot.set(a.name, { x: p.x + 9 + (i % per) * 34, y: 98 + 24 + Math.floor(i / per) * 24 }));
+    list.forEach((a, i) => slot.set(a.name, { x: p.x + 9 + (i % per) * 34, y: p.y + 24 + Math.floor(i / per) * 24 }));
   }
   let q = 0;
   for (const a of s.actors) if (!slot.has(a.name)) {
     // resuming/suspending with an unknown or departed worker: hold mid-air
     const p = a.worker && pos.get(a.worker);
-    slot.set(a.name, p ? { x: p.x + p.w / 2 - 9, y: 172 } : { x: W / 2 - 40 + (q++) * 22, y: 174 });
+    slot.set(a.name, p ? { x: p.x + p.w / 2 - 9, y: portrait ? 392 : 172 } : { x: W / 2 - 40 + (q++) * 22, y: portrait ? 392 : 174 });
   }
   const live2 = new Set();
   for (const a of s.actors) {
@@ -353,7 +400,7 @@ function render(s) {
 
   // ticker: newest first, last 7
   const tk = $('ticker');
-  const evs = s.events.slice(-4);
+  const evs = s.events.slice(layout === 'portrait' ? -6 : -4);
   const want = new Set(evs.map(e => e.id));
   for (const el of [...tk.children]) if (!want.has(+el.dataset.id)) el.remove();
   for (const e of evs) {
@@ -439,6 +486,7 @@ function apply() {
   $('bTop').classList.toggle('on', onTop);
   $('bClick').classList.toggle('on', clickThru);
   $('bSim').classList.toggle('on', sim);
+  $('bLayout').textContent = layout === 'portrait' ? 'WIDE' : 'PORTRAIT';
   if (win) {
     win.setAlwaysOnTop(onTop).catch(() => {});
     win.setIgnoreCursorEvents(clickThru).catch(() => {});
@@ -452,9 +500,17 @@ function toggle(what) {
     if (clickThru && !onTop) { onTop = true; }
     toast(clickThru ? 'Click-through on · Esc to get clicks back' : 'Click-through off');
   }
+  if (what === 'layout') {
+    setLayout(layout === 'portrait' ? 'wide' : 'portrait');
+    store.set('wide', layout === 'wide');
+    if (win && TAURI.window.LogicalSize) win.setSize(new TAURI.window.LogicalSize(W, H)).catch(() => {});
+    $('ticker').innerHTML = '';
+    if (last && !sim) render(last);
+  }
   if (what === 'sim') { sim = !sim; toast(sim ? 'Simulated traffic' : 'Live cluster'); if (!sim && last) render(last); }
   apply();
 }
+$('bLayout').onclick = () => toggle('layout');
 $('bBack').onclick = () => toggle('panel');
 $('bTop').onclick = () => toggle('top');
 $('bClick').onclick = () => toggle('click');
@@ -467,7 +523,8 @@ $('bObs').onclick = async () => {
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey) return;
   const k = e.key.toLowerCase();
-  if (k === 'b') toggle('panel');
+  if (k === 'l') toggle('layout');
+  else if (k === 'b') toggle('panel');
   else if (k === 'p') toggle('top');
   else if (k === 'i') toggle('click');
   else if (k === 's') toggle('sim');

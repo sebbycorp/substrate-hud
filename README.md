@@ -35,7 +35,9 @@ Icon: `python3 tools/make_icon.py app/src-tauri/icon-src.png && cargo tauri icon
 
 ## OBS
 
-Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width 720, height 284 (or any multiple, e.g. 1440×568).
+Add a **Browser Source** → URL `http://127.0.0.1:7788/`, width **320 × 680** (portrait side rail,
+the default; 640×1360 for crisper text). For the wide lower-third strip use
+`http://127.0.0.1:7788/?layout=wide` at 720 × 284.
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
 
@@ -48,6 +50,7 @@ Hover the top-right for controls, or use keys:
 
 | Key | |
 | --- | --- |
+| **L** | portrait rail ⇄ wide strip (resizes the window) |
 | **B** | dark panel behind the HUD (on by default in the window) |
 | **P** | keep on top |
 | **I** | click-through (Esc to exit) |

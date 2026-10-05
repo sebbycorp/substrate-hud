@@ -13,9 +13,9 @@
       {
         "label": "main",
         "title": "Substrate HUD",
-        "width": 720,
-        "height": 284,
-        "minWidth": 360,
+        "width": 320,
+        "height": 680,
+        "minWidth": 160,
         "minHeight": 142,
         "resizable": true,
         "transparent": true,
