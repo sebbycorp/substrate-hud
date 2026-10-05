@@ -41,9 +41,10 @@ the default; 640×1560 for crisper text). For the wide lower-third strip use
 The background is truly transparent (no chroma key). The app must be running.
 Hover the app window → **OBS URL** copies it.
 
-Default look: whiteboard style (marker fonts, hand-drawn boxes) in white marker
-on a transparent background. Query params: `?board=1` puts it on an off-white
-board with dark marker, `?theme=glass` switches to the clean glass look,
+Default look: **rings**: workers are circles that glow green while an agent
+runs in them, in bold white with a strong shadow, on a transparent background.
+Query params: `?theme=wb` (whiteboard; add `?board=1` for the off-white board),
+`?theme=glass` (the clean glass look),
 `?sim=1` forces simulated traffic.
 
 ## App window
@@ -52,7 +53,7 @@ Hover the top-right for controls, or use keys:
 
 | Key | |
 | --- | --- |
-| **W** | whiteboard (default) ⇄ glass look |
+| **W** | cycle the look: rings (default) → whiteboard → glass |
 | **L** | portrait rail ⇄ wide strip (resizes the window) |
 | **B** | board (whiteboard) / dark panel (glass) behind the HUD; off = transparent |
 | **P** | keep on top |
